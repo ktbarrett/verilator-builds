@@ -1,0 +1,100 @@
+name: Build one upstream revision
+
+on:
+  workflow_call:
+    inputs:
+      sha:
+        required: true
+        type: string
+      label:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  platforms:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.platforms.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - id: platforms
+        run: python3 -m tools.matrix
+
+  build:
+    needs: platforms
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.platforms.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    env:
+      SOURCE_SHA: ${{ inputs.sha }}
+      BUILD_LABEL: ${{ inputs.label }}
+      BUILD_PLATFORM: ${{ matrix.platform }}
+      RECIPE_SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: verilator/verilator
+          ref: ${{ inputs.sha }}
+          path: upstream
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        if: runner.os != 'Windows'
+        with:
+          python-version: '3.12'
+      - name: Build Linux in manylinux
+        if: runner.os == 'Linux'
+        run: >-
+          python -m tools.linux --platform "$BUILD_PLATFORM" --sha "$SOURCE_SHA"
+          --label "$BUILD_LABEL" --recipe "$RECIPE_SHA"
+      - name: Install macOS build tools
+        if: runner.os == 'macOS'
+        run: brew install autoconf bison flex help2man
+      - name: Build macOS
+        if: runner.os == 'macOS'
+        run: |
+          PATH="$(brew --prefix bison)/bin:$(brew --prefix flex)/bin:$PATH"
+          export PATH
+          python -m tools.build --source upstream --platform "$BUILD_PLATFORM" \
+            --sha "$SOURCE_SHA" --label "$BUILD_LABEL" --recipe "$RECIPE_SHA"
+      - uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2.31.0
+        if: runner.os == 'Windows'
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            autoconf bison flex make perl python git help2man
+            mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-zlib
+      - name: Build Windows with GCC
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: >-
+          /usr/bin/python3 -m tools.build --source upstream --platform "$BUILD_PLATFORM"
+          --sha "$SOURCE_SHA" --label "$BUILD_LABEL" --recipe "$RECIPE_SHA"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: packages-${{ inputs.label }}-${{ matrix.platform }}
+          path: |
+            dist/*-${{ matrix.platform }}.tar.gz
+            dist/*-${{ matrix.platform }}.zip
+            dist/${{ matrix.platform }}.manifest.json
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: matrix.platform == 'linux-x86_64'
+        with:
+          name: packages-${{ inputs.label }}-source
+          path: dist/*-source.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0

@@ -1,0 +1,76 @@
+name: Build releases
+
+on:
+  schedule:
+    - cron: '23 5 * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Discover releases, build only, publish a stable tag, or replace nightly
+        type: choice
+        options: [auto, build, stable, nightly]
+        default: build
+      ref:
+        description: Upstream tag or commit (ignored in auto mode)
+        type: string
+        default: v5.048
+
+permissions:
+  contents: read
+
+# Share one group across every schedule/manual run. GitHub may coalesce pending
+# runs; discovery retries missing releases on the next run.
+concurrency:
+  group: release-pipeline
+  cancel-in-progress: false
+
+jobs:
+  discover:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.discover.outputs.matrix }}
+      has_builds: ${{ steps.discover.outputs.has_builds }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.12'
+      - id: discover
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_MODE: ${{ inputs.mode || 'auto' }}
+          UPSTREAM_REF: ${{ inputs.ref || 'v5.048' }}
+        run: python -m tools.discover --mode "$BUILD_MODE" --ref "$UPSTREAM_REF"
+
+  cleanup:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.12'
+      - if: github.event_name == 'schedule' || inputs.mode == 'auto' || inputs.mode == 'nightly'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python -m tools.publish --mode cleanup
+
+  build:
+    needs: [discover, cleanup]
+    if: needs.discover.outputs.has_builds == 'true'
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    uses: ./.github/workflows/release.yml
+    permissions:
+      contents: write
+    with:
+      sha: ${{ matrix.sha }}
+      label: ${{ matrix.label }}
+      mode: ${{ matrix.mode }}
