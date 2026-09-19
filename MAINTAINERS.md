@@ -109,6 +109,19 @@ After configure, the build replaces `-latomic` with
 code in the executable while leaving glibc dynamically linked. The override is
 recorded in the package manifest and does not change generated simulation link flags.
 
+As a temporary workaround, macOS hosts older than 26 explicitly select Homebrew's Flex and
+its `FlexLexer.h`. A newer Xcode SDK can provide incompatible `size_t` signatures
+even on macOS 15, while Homebrew Flex generates `int` signatures. On macOS 26+
+the SDK header is used because upstream `src/flexfix` rewrites the generated
+signatures to `size_t` based on the host OS. This distinction follows upstream's
+current workaround. The selected include flags are recorded in the package manifest.
+The local workaround and this documentation are kept in one commit for removal
+with `git revert`. Keep it while supporting older releases such as `v5.050`;
+an upstream merge does not change those tags. Revert it once the minimum macOS
+release and CI seed contain the upstream fix. A fixed upstream revision remains
+compatible with this workaround because configure selects the matching header
+and no longer rewrites signatures based on the host OS.
+
 Every CI package is extracted to a new directory after its build source and
 staging installation have been removed. Validation checks version provenance,
 linting, generated C++ compilation, simulation results, VCD tracing, and coverage.
