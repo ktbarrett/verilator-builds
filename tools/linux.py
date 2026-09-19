@@ -9,6 +9,25 @@ from pathlib import Path
 from .config import PLATFORMS, ROOT
 
 
+def ensure_static_libatomic():
+    """Use the active toolchain's archive before asking yum for a file provider."""
+
+    def compiler_archive():
+        return Path(
+            subprocess.check_output(["g++", "-print-file-name=libatomic.a"], text=True).strip()
+        )
+
+    archive = compiler_archive()
+    if not archive.is_file():
+        # RPM names differ between the base system and bundled GCC toolchains.
+        # Pass the file glob directly to yum, without shell expansion.
+        subprocess.run(["yum", "install", "-y", "*/libatomic.a"], check=True)
+        archive = compiler_archive()
+    if not archive.is_file():
+        raise ValueError("The active g++ still cannot find libatomic.a after installation")
+    print(f"Static libatomic available: {archive}", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -34,10 +53,10 @@ def main():
                 "perl",
                 "help2man",
                 "zlib-devel",
-                "libatomic-static",
             ],
             check=True,
         )
+        ensure_static_libatomic()
         subprocess.run(
             ["git", "config", "--global", "--add", "safe.directory", "/workspace/upstream"],
             check=True,

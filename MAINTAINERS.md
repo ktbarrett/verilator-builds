@@ -100,8 +100,11 @@ Linux host, `--skip-abi-audit` is available; it is forbidden in CI and publicati
 rejects such packages. Outputs go to ignored `dist/`; temporary builds use ignored
 `work/`. Build and install paths must not contain spaces.
 
-Linux builds need the static libatomic archive (the manylinux setup installs
-`libatomic-static`). After configure, the build replaces `-latomic` with
+Linux builds need the static libatomic archive. The manylinux setup first checks
+`g++ -print-file-name=libatomic.a` and uses the toolchain's existing archive. If
+missing, it asks yum for a package providing `*/libatomic.a`, since RPM names vary
+between architectures and toolchains, then checks the compiler can find it.
+After configure, the build replaces `-latomic` with
 `-l:libatomic.a` in Verilator's `CFG_LIBS` make variable. This keeps atomic helper
 code in the executable while leaving glibc dynamically linked. The override is
 recorded in the package manifest and does not change generated simulation link flags.
