@@ -41,8 +41,37 @@ def export_source(checkout, sha, destination, archive):
         source.extractall(destination.parent, filter="data")
 
 
+def relocate_launchers(install):
+    """Set Perl launcher paths to match our archive layout on every host."""
+    launcher = install / "bin/verilator"
+    contents, count = re.subn(
+        r"^my \$verilator_pkgdatadir_relpath = .*;$",
+        'my $verilator_pkgdatadir_relpath = "../share/verilator";',
+        launcher.read_text(),
+        flags=re.MULTILINE,
+    )
+    if count != 1:
+        raise ValueError("Expected exactly one data-directory assignment in bin/verilator")
+    launcher.write_text(contents)
+    # These public-script redirects use the same install-time path substitution.
+    # Native executables are replaced separately; private utilities have no redirect.
+    for script in (install / "share/verilator/bin").iterdir():
+        with script.open("rb") as stream:
+            if stream.read(2) != b"#!":
+                continue
+        contents, count = re.subn(
+            r"^my \$relpath = .*;[^\r\n]*$",
+            'my $relpath = "../../../bin";',
+            script.read_text(),
+            flags=re.MULTILINE,
+        )
+        if count:
+            script.write_text(contents)
+
+
 def normalize_install(install, source, platform):
     data = install / "share/verilator"
+    relocate_launchers(install)
     compiler = "clang++" if platform.startswith("macos-") else "g++"
     replacements = {
         "AR": "ar",

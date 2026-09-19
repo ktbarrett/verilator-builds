@@ -85,6 +85,11 @@ GitHub API utilities also use `gh`. Responsibilities are separated:
 - `tools/publish.py`: verify complete sets, publish, and clean up nightly assets.
 - `config.json`: discovery start, per-platform first releases, compatibility targets, runners, and images.
 
+Packaging explicitly sets the Perl launcher's data path to `../share/verilator`
+and public-script redirects to `../../../bin`, using forward slashes. This keeps
+the archive relocatable even when upstream's install-time path substitution
+produces incorrect paths under MSYS2. Users do not need to set `VERILATOR_ROOT`.
+
 Build locally from an existing checkout without changing that checkout:
 
 ```sh
