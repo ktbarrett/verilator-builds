@@ -9,8 +9,9 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from .config import PLATFORMS, validate_label
+from .config import PLATFORMS, supported_platforms, validate_label
 from .package import create_archive, export_source, normalize_install, sha256, source_archive_path
+from .upstream import source_version
 from .validate import validate_archive
 
 
@@ -57,6 +58,12 @@ def build(args):
         source, install = work / "source", work / "install"
         source_archive = source_archive_path(args.output, args.label)
         export_source(args.source, args.sha, source, source_archive)
+        release = source_version((source / "configure.ac").read_text())
+        if args.platform not in supported_platforms(release):
+            raise ValueError(
+                f"{args.platform} requires Verilator {target['first_release']} or newer; "
+                f"source declares {release}"
+            )
         env = os.environ.copy()
         for key in (
             "VERILATOR_ROOT",
@@ -124,6 +131,7 @@ def build(args):
             )
             shutil.copy2(binary, install / "share/verilator/bin" / binary.name)
         build_info = {
+            "source_version": release,
             "compiler": subprocess.check_output([compiler, "--version"], env=env, text=True),
             "host": host_platform.platform(),
             "configure": [arg.replace(str(install), "<prefix>") for arg in configure],

@@ -5,28 +5,33 @@
   "max_releases_per_run": 3,
   "platforms": {
     "linux-x86_64": {
+      "first_release": "v5.048",
       "runner": "ubuntu-24.04",
       "image": "quay.io/pypa/manylinux2014_x86_64",
       "minimum": "glibc 2.17",
       "arch": "x86_64"
     },
     "linux-aarch64": {
+      "first_release": "v5.048",
       "runner": "ubuntu-24.04-arm",
       "image": "quay.io/pypa/manylinux2014_aarch64",
       "minimum": "glibc 2.17",
       "arch": "aarch64"
     },
     "macos-x86_64": {
+      "first_release": "v5.050",
       "runner": "macos-15-intel",
       "minimum": "10.15",
       "arch": "x86_64"
     },
     "macos-arm64": {
+      "first_release": "v5.050",
       "runner": "macos-26",
       "minimum": "11.0",
       "arch": "arm64"
     },
     "windows-x86_64": {
+      "first_release": "v5.048",
       "runner": "windows-2022",
       "minimum": "Windows 11 (MSYS2 UCRT64)",
       "arch": "x86_64"

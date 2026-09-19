@@ -23,7 +23,10 @@ jobs:
         with:
           persist-credentials: false
       - id: platforms
-        run: python3 -m tools.matrix
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ inputs.sha }}
+        run: python3 -m tools.matrix --sha "$SOURCE_SHA"
 
   build:
     needs: platforms
@@ -91,7 +94,7 @@ jobs:
           retention-days: 1
           compression-level: 0
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        if: matrix.platform == 'linux-x86_64'
+        if: matrix.source_asset
         with:
           name: packages-${{ inputs.label }}-source
           path: dist/*-source.tar.gz

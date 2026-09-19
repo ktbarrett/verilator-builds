@@ -8,15 +8,24 @@ import tarfile
 import zipfile
 from pathlib import Path
 
-from .config import CONFIG, PLATFORMS, archive_name, expected_assets, source_name, version
+from .config import CONFIG, archive_name, expected_assets, source_name, supported_platforms, version
 from .discover import MARKER, complete, release_state
 from .github import GitHub
 from .package import sha256
+from .upstream import archive_version
 
 
 def assemble(directory, label, sha, recipe):
+    source = directory / source_name(label)
+    if not source.is_file() or not source.stat().st_size:
+        raise ValueError("Missing corresponding upstream source archive")
+    release = archive_version(source)
+    platforms = supported_platforms(release)
+    if not platforms:
+        raise ValueError(f"No platforms support Verilator {release}")
+    required_assets = expected_assets(label, release)
     manifests = []
-    for platform in PLATFORMS:
+    for platform in platforms:
         manifest = json.loads((directory / f"{platform}.manifest.json").read_text())
         name = archive_name(label, platform)
         archive = directory / name
@@ -28,6 +37,7 @@ def assemble(directory, label, sha, recipe):
             "label": label,
             "platform": platform,
             "archive": name,
+            "source_version": release,
         }.items():
             if manifest.get(field) != value:
                 raise ValueError(f"Mismatched {field} in {platform} manifest")
@@ -42,14 +52,11 @@ def assemble(directory, label, sha, recipe):
         if embedded != {k: v for k, v in manifest.items() if k not in {"archive", "sha256"}}:
             raise ValueError(f"Embedded manifest mismatch: {name}")
         manifests.append(manifest)
-    source = directory / source_name(label)
-    if not source.is_file() or not source.stat().st_size:
-        raise ValueError("Missing corresponding upstream source archive")
     source_hash = sha256(source)
-    # The source asset comes from the x86-64 Linux job. Other jobs may use a
+    # The source asset comes from the first supported platform. Other jobs may use a
     # different git/zlib version, so compare their source commit rather than
     # expecting byte-identical gzip streams across operating systems.
-    source_manifest = next(m for m in manifests if m["platform"] == "linux-x86_64")
+    source_manifest = manifests[0]
     if source_manifest.get("source_sha256") != source_hash:
         raise ValueError("Source archive checksum differs from the build manifest")
     with tarfile.open(source) as archive:
@@ -60,22 +67,21 @@ def assemble(directory, label, sha, recipe):
         "sha": sha,
         "recipe": recipe,
         "label": label,
+        "source_version": release,
         "source": {"archive": source.name, "sha256": source_hash},
         "packages": manifests,
     }
     (directory / f"manifest-{label}.json").write_text(json.dumps(combined, indent=2) + "\n")
     paths = [
-        directory / name
-        for name in sorted(expected_assets(label))
-        if not name.startswith("SHA256SUMS-")
+        directory / name for name in sorted(required_assets) if not name.startswith("SHA256SUMS-")
     ]
     checksums = directory / f"SHA256SUMS-{label}.txt"
     checksums.write_text("".join(f"{sha256(path)}  {path.name}\n" for path in paths))
     return [*paths, checksums]
 
 
-def obsolete_assets(assets, label):
-    keep = expected_assets(label)
+def obsolete_assets(assets, label, source_version=None):
+    keep = expected_assets(label, source_version)
     return [a for a in assets if a["name"] not in keep]
 
 
@@ -87,7 +93,7 @@ def cleanup_nightly(api):
     state = release_state(nightly)
     assets = api.assets(nightly)
     if state and complete(nightly, assets, state["sha"], state["recipe"]):
-        for asset in obsolete_assets(assets, state["label"]):
+        for asset in obsolete_assets(assets, state["label"], state.get("source_version")):
             api.api(f"repos/{api.repository}/releases/assets/{asset['id']}", "DELETE")
     elif nightly["draft"] and not state:
         # An interrupted first publication has no successful set to preserve.
@@ -140,11 +146,18 @@ def publish(api, directory, mode, label, sha, recipe):
         # GitHub exposes digests for current uploads; enforce them when available.
         if asset.get("digest") and asset["digest"] != f"sha256:{sha256(path)}":
             raise ValueError(f"Uploaded digest mismatch: {path.name}")
-    state = {"sha": sha, "recipe": recipe, "label": label}
+    manifest = json.loads((directory / f"manifest-{label}.json").read_text())
+    state = {
+        "sha": sha,
+        "recipe": recipe,
+        "label": label,
+        "source_version": manifest["source_version"],
+    }
+    platforms = ", ".join(package["platform"] for package in manifest["packages"])
     body = (
         f"Verilator binaries built from [{sha}](https://github.com/{CONFIG['upstream']}/commit/{sha}).\n\n"
         f"Packaging revision: [{recipe}](https://github.com/{api.repository}/commit/{recipe}).\n\n"
-        "Includes Linux x86-64/ARM64, macOS Intel/Apple Silicon, and Windows x86-64. "
+        f"Includes: {platforms}. "
         "See the repository README for compatibility targets and required build tools. "
         "Source, manifests, and SHA-256 checksums are included.\n\n"
         f"<!-- {MARKER} {json.dumps(state, separators=(',', ':'))} -->\n"

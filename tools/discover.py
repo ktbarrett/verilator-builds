@@ -21,7 +21,10 @@ def release_state(release):
             isinstance(state.get(key), str) for key in ("sha", "recipe", "label")
         ):
             return None
-        expected_assets(state["label"])
+        source_version = state.get("source_version")
+        if source_version is not None and not isinstance(source_version, str):
+            return None
+        expected_assets(state["label"], source_version)
         return state
     except (json.JSONDecodeError, ValueError):
         return None
@@ -39,7 +42,7 @@ def complete(release, assets, sha, recipe=None):
         return False
     if tag == "nightly" and not release.get("prerelease"):
         return False
-    return expected_assets(state["label"]) <= names
+    return expected_assets(state["label"], state.get("source_version")) <= names
 
 
 def discover(api, recipe, mode, ref, run):

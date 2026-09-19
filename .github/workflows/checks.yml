@@ -22,7 +22,7 @@ jobs:
       - run: ruff format --check .
       - run: python -m unittest discover -s tests -v
 
-  # A PR exercises packaging on all five targets without release credentials.
+  # Use the oldest release supported by every target, without release credentials.
   packages:
     uses: ./.github/workflows/build.yml
     needs: resolve

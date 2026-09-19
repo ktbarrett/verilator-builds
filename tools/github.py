@@ -1,5 +1,6 @@
 """Small GitHub API adapter using the runner's authenticated gh CLI."""
 
+import base64
 import json
 import subprocess
 from urllib.parse import quote
@@ -40,6 +41,14 @@ class GitHub:
 
     def commit(self, repository, ref):
         return self.api(f"repos/{repository}/commits/{quote(ref, safe='')}")["sha"]
+
+    def file(self, repository, path, ref):
+        result = self.api(
+            f"repos/{repository}/contents/{quote(path, safe='/')}?ref={quote(ref, safe='')}"
+        )
+        if result.get("encoding") != "base64":
+            raise ValueError(f"Unsupported content encoding for {path}")
+        return base64.b64decode(result["content"]).decode()
 
     def upload(self, tag, paths):
         subprocess.run(

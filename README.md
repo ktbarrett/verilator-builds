@@ -6,13 +6,13 @@ There is also a special `nightly` release which builds every night.
 
 ## Platform Support
 
-| Archive platform | Compatibility target |
-| --- | --- |
-| `linux-x86_64` | glibc 2.17+, baseline x86-64 |
-| `linux-aarch64` | glibc 2.17+, ARMv8-A |
-| `macos-x86_64` | macOS 10.15+ |
-| `macos-arm64` | macOS 11+ |
-| `windows-x86_64` | Windows 11, MSYS2 UCRT64 |
+| Archive platform | Compatibility target | First Verilator release |
+| --- | --- | --- |
+| `linux-x86_64` | glibc 2.17+, baseline x86-64 | v5.048 |
+| `linux-aarch64` | glibc 2.17+, ARMv8-A | v5.048 |
+| `macos-x86_64` | macOS 10.15+ | v5.050 |
+| `macos-arm64` | macOS 11+ | v5.050 |
+| `windows-x86_64` | Windows 11, MSYS2 UCRT64 | v5.048 |
 
 ## Use a package
 

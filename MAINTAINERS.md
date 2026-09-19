@@ -9,10 +9,17 @@ packaging commit also triggers a new nightly. Unchanged, complete builds are
 skipped. Failed builds and incomplete uploads are retried on a later run.
 
 All platforms build the same resolved upstream commit. Stable publication first
-uploads into a draft and publishes only after all five packages pass validation.
+uploads into a draft and publishes only after every supported platform passes validation.
 Existing complete stable releases are preserved. A moved upstream tag causes an
-error rather than silently replacing its published binaries. Older upstream tags
-can be requested manually; their compatibility with these recipes is not promised.
+error rather than silently replacing its published binaries.
+
+Each platform has an inclusive `first_release` in `config.json`: Linux and Windows
+start at `v5.048`; both macOS architectures start at `v5.050`. The top-level
+`first_release` controls automatic release discovery. Build matrices use the version
+declared in the requested commit's `configure.ac`, so manual tags, commits, and
+nightlies follow the same platform cutoffs. For example, `5.049 devel` excludes
+macOS and `5.051 devel` includes it. Revisions older than every platform's cutoff
+fail with a clear error. Local builds enforce the same cutoffs.
 
 The rolling nightly keeps **one successful generation**. Replacement assets have
 unique names and are verified before the release switches to them; obsolete
@@ -22,13 +29,17 @@ nightly available, even when it is older than one day. Storage temporarily holds
 both generations during replacement. Intermediate Actions artifacts expire after
 one day, and no persistent build cache is used. Stable release assets are retained.
 
-Each release contains five binary archives, the corresponding upstream source
+Each release contains one binary archive per supported platform, the corresponding upstream source
 archive, a combined manifest, and SHA-256 checksums. The source archive is an exact
 export of the upstream commit. Packaging changes to installed metadata are
 implemented in this repository. GitHub's automatically generated source archives
 refer to **this packaging repository**, not upstream Verilator; use the explicitly
 attached `verilator-<label>-source.tar.gz` instead. Mirror tags identify packaging
 commits; manifests identify the upstream source commit.
+Manifests also record the declared source version. Publication verifies the
+platform set against the source archive, and discovery requires only supported
+packages: three for `v5.048`, five from `v5.050` onward. Nightly cleanup uses its
+recorded source version to preserve the correct package set.
 
 GitHub schedules can be delayed and run only from the default branch. GitHub may
 disable scheduled workflows in inactive public repositories; re-enable them in
@@ -66,11 +77,13 @@ Standalone utilities are Python modules using the standard library (Python 3.12+
 GitHub API utilities also use `gh`. Responsibilities are separated:
 
 - `tools/discover.py`: resolve requested source revisions and find missing releases.
+- `tools/upstream.py`: read the source version from upstream metadata.
+- `tools/matrix.py`: select supported build targets and resolve the CI test release.
 - `tools/build.py`, `tools/linux.py`: build a private source export on the target platform.
 - `tools/package.py`: relocate installed metadata, create archives and provenance.
 - `tools/validate.py`: inspect executable dependencies and run the installed smoke test.
 - `tools/publish.py`: verify complete sets, publish, and clean up nightly assets.
-- `config.json`: seed release, platform compatibility targets, runners, and images.
+- `config.json`: discovery start, per-platform first releases, compatibility targets, runners, and images.
 
 Build locally from an existing checkout without changing that checkout:
 
@@ -106,7 +119,8 @@ ruff check .
 ruff format --check .
 ```
 
-Pull requests and pushes also build the seed release across all five platforms.
+Pull requests and pushes build the oldest release supported by every platform
+(currently `v5.050`), so macOS remains covered even though discovery starts earlier.
 GitHub Actions are pinned to commits. Manylinux image digests are recorded in
 manifests, but the configured image tags and installed build dependencies can
 advance; these builds are not claimed to be bit-for-bit reproducible. Pin image
