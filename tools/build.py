@@ -19,6 +19,26 @@ def run(command, **kwargs):
     subprocess.run(list(map(str, command)), check=True, **kwargs)
 
 
+def linux_library_override(source, compiler, env):
+    """Select static libatomic in Verilator's link libraries, after the objects."""
+    makefile = source / "src/Makefile_obj"
+    matches = re.findall(r"^CFG_LIBS[ \t]*=[ \t]*(.*)$", makefile.read_text(), re.MULTILINE)
+    if len(matches) != 1:
+        raise ValueError(f"Expected exactly one CFG_LIBS assignment in {makefile}")
+    libraries, count = re.subn(r"(?<!\S)-latomic(?!\S)", "-l:libatomic.a", matches[0])
+    if not count:
+        return None
+    archive = subprocess.check_output(
+        [compiler, "-print-file-name=libatomic.a"], env=env, text=True
+    ).strip()
+    if archive == "libatomic.a" or not Path(archive).is_file():
+        raise ValueError(
+            f"{compiler} cannot find libatomic.a; install the static libatomic package"
+        )
+    print(f"Linking static libatomic from {archive}", flush=True)
+    return f"CFG_LIBS={libraries}"
+
+
 def build(args):
     target = PLATFORMS[args.platform]
     validate_label(args.label)
@@ -86,6 +106,10 @@ def build(args):
         # Build and ship upstream's optimized, debug, and coverage executables.
         # Strip debug symbols below to bound download size.
         make_args = [f"-j{args.jobs}"]
+        if args.platform.startswith("linux-"):
+            override = linux_library_override(source, compiler, env)
+            if override is not None:
+                make_args.append(override)
         run(["make", *make_args], cwd=source, env=env)
         run(["make", "install", *make_args], cwd=source, env=env)
         normalize_install(install, source, args.platform)
@@ -104,6 +128,7 @@ def build(args):
             "host": host_platform.platform(),
             "configure": [arg.replace(str(install), "<prefix>") for arg in configure],
             "flags": {key: env[key] for key in ("CXXFLAGS", "LDFLAGS", "LIBS")},
+            "make_overrides": make_args[1:],
             "image": os.environ.get("BUILD_IMAGE", ""),
             "abi_audited": not args.skip_abi_audit,
             "source_sha256": sha256(source_archive),

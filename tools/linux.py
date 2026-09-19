@@ -34,6 +34,7 @@ def main():
                 "perl",
                 "help2man",
                 "zlib-devel",
+                "libatomic-static",
             ],
             check=True,
         )

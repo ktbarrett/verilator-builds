@@ -2,6 +2,7 @@ Verilator's licenses are copied from the exact upstream source revision into
 each distribution. The corresponding upstream source is attached to the release.
 
 Linux and Windows distributions statically link GCC's libgcc and libstdc++.
+Linux distributions also statically link GCC's libatomic when required.
 Those runtime components are provided under GPLv3 with the GCC Runtime Library
 Exception 3.1. Copies of both texts are included here. Windows distributions
 also include MinGW runtime and winpthreads notices from the MSYS2 toolchain.

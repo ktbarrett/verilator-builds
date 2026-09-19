@@ -18,7 +18,7 @@ class CompatibilityTests(unittest.TestCase):
         ):
             with self.assertRaises(ValueError):
                 check_linux(dynamic, symbols, header, "x86_64")
-        for library in ("libstdc++.so.6", "libgcc_s.so.1", "libjemalloc.so.2"):
+        for library in ("libstdc++.so.6", "libgcc_s.so.1", "libatomic.so.1", "libjemalloc.so.2"):
             with self.assertRaises(ValueError):
                 check_linux(f"(NEEDED) [{library}]", "", header, "x86_64")
 
