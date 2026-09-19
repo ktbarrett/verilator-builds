@@ -109,6 +109,11 @@ After configure, the build replaces `-latomic` with
 code in the executable while leaving glibc dynamically linked. The override is
 recorded in the package manifest and does not change generated simulation link flags.
 
+Windows builds use MSYS2's `/usr/bin/flex` with UCRT64 GCC. The build adds
+`-idirafter /usr/include` so GCC searches its standard UCRT64 headers first,
+then finds `FlexLexer.h` in the installed MSYS Flex package. No header is copied
+into the build directory. Use `-idirafter`, not `-I`, to preserve that search order.
+
 As a temporary workaround, macOS hosts older than 26 explicitly select Homebrew's Flex and
 its `FlexLexer.h`. A newer Xcode SDK can provide incompatible `size_t` signatures
 even on macOS 15, while Homebrew Flex generates `int` signatures. On macOS 26+

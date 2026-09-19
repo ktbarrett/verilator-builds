@@ -87,6 +87,14 @@ def build(args):
         if args.platform == "linux-aarch64":
             archflags = "-march=armv8-a"
         env.update(CFLAGS=archflags, CXXFLAGS=archflags, CPPFLAGS="", LDFLAGS="", LIBS="")
+        if args.platform.startswith("windows-"):
+            # Search MSYS headers after UCRT64's standard include directories.
+            header = Path("/usr/include/FlexLexer.h")
+            if not header.is_file():
+                raise ValueError(f"Missing {header}; install the MSYS2 flex package")
+            env["LEX"] = "/usr/bin/flex"
+            env["CPPFLAGS"] = f"-idirafter {header.parent}"
+            print(f"Using MSYS Flex header after UCRT64 headers: {header}", flush=True)
         configure = [
             "sh",
             "./configure",
