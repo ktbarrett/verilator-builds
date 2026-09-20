@@ -110,20 +110,6 @@ def build(args):
                 ["xcrun", "--show-sdk-path"],
                 text=True,
             ).strip()
-            # Temporary workaround for releases predating upstream's Flex fix.
-            # Upstream flexfix changes the generated int signatures to size_t on
-            # macOS 26+ to match Apple's SDK header. Older hosts need Homebrew's
-            # matching generator/header pair even when using a newer SDK.
-            if int(host_platform.mac_ver()[0].split(".")[0]) < 26:
-                flex_prefix = Path(
-                    subprocess.check_output(["brew", "--prefix", "flex"], text=True).strip()
-                )
-                header = flex_prefix / "include/FlexLexer.h"
-                if not header.is_file():
-                    raise ValueError(f"Missing Homebrew Flex header: {header}")
-                env["LEX"] = str(flex_prefix / "bin/flex")
-                env["CPPFLAGS"] = f"-I{header.parent}"
-                print(f"Using Flex header: {header}", flush=True)
             configure.append("--disable-partial-static")
         elif args.platform.startswith("windows-"):
             env["LDFLAGS"] = "-static -static-libgcc -static-libstdc++"
@@ -157,7 +143,7 @@ def build(args):
             "compiler": subprocess.check_output([compiler, "--version"], env=env, text=True),
             "host": host_platform.platform(),
             "configure": [arg.replace(str(install), "<prefix>") for arg in configure],
-            "flags": {key: env[key] for key in ("CPPFLAGS", "CXXFLAGS", "LDFLAGS", "LIBS")},
+            "flags": {key: env[key] for key in ("CXXFLAGS", "LDFLAGS", "LIBS")},
             "make_overrides": make_args[1:],
             "image": os.environ.get("BUILD_IMAGE", ""),
             "abi_audited": not args.skip_abi_audit,
