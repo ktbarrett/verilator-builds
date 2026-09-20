@@ -20,7 +20,7 @@ def assemble(directory, label, sha, recipe):
     if not source.is_file() or not source.stat().st_size:
         raise ValueError("Missing corresponding upstream source archive")
     release = archive_version(source)
-    platforms = supported_platforms(release)
+    platforms = supported_platforms(label)
     if not platforms:
         raise ValueError(f"No platforms support Verilator {release}")
     required_assets = expected_assets(label, release)

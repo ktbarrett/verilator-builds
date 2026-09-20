@@ -14,12 +14,14 @@ Existing complete stable releases are preserved. A moved upstream tag causes an
 error rather than silently replacing its published binaries.
 
 Each platform has an inclusive `first_release` in `config.json`: Linux and Windows
-start at `v5.048`; both macOS architectures start at `v5.050`. The top-level
-`first_release` controls automatic release discovery. Build matrices use the version
-declared in the requested commit's `configure.ac`, so manual tags, commits, and
-nightlies follow the same platform cutoffs. For example, `5.049 devel` excludes
-macOS and `5.051 devel` includes it. Revisions older than every platform's cutoff
-fail with a clear error. Local builds enforce the same cutoffs.
+start at `v5.048`, macOS ARM64 at `v5.050`, and macOS Intel at `v5.054`. The top-level
+`first_release` controls automatic release discovery. Versioned labels use these
+release floors to select platforms. Development labels, including `master` and
+the generated nightly labels, build every platform. This same label determines the
+matrix, local build eligibility, required release assets, and nightly cleanup.
+Versioned labels older than every platform's cutoff fail with a clear error.
+For local builds, use a release tag as the label to apply its platform minimums,
+or `--label master` to test every platform with a development checkout.
 
 The rolling nightly keeps **one successful generation**. Replacement assets have
 unique names and are verified before the release switches to them; obsolete
@@ -36,10 +38,10 @@ implemented in this repository. GitHub's automatically generated source archives
 refer to **this packaging repository**, not upstream Verilator; use the explicitly
 attached `verilator-<label>-source.tar.gz` instead. Mirror tags identify packaging
 commits; manifests identify the upstream source commit.
-Manifests also record the declared source version. Publication verifies the
-platform set against the source archive, and discovery requires only supported
-packages: three for `v5.048`, five from `v5.050` onward. Nightly cleanup uses its
-recorded source version to preserve the correct package set.
+Manifests also record the declared source version. Publication verifies that stable
+labels and package metadata match the source archive. Discovery requires only the
+packages selected by the label: three for `v5.048`, four for `v5.050` and `v5.052`,
+and five from `v5.054` onward. Development labels always require every platform.
 
 GitHub schedules can be delayed and run only from the default branch. GitHub may
 disable scheduled workflows in inactive public repositories; re-enable them in
@@ -52,7 +54,7 @@ Use **Actions → Build releases → Run workflow**:
 
 | Mode | Ref | Result |
 | --- | --- | --- |
-| `build` (default) | Any upstream tag or commit | One-day Actions artifacts; no release changes |
+| `build` (default) | Any upstream tag or commit | Test every platform; one-day Actions artifacts |
 | `stable` | `v5.048` | Publish the first mirrored release |
 | `auto` | Ignored | Catch up on releases from v5.048 and update nightly |
 | `nightly` | `master`, a tag, or a commit | Force replacement of the rolling prerelease |
@@ -132,8 +134,8 @@ ruff check .
 ruff format --check .
 ```
 
-Pull requests and pushes build the oldest release supported by every platform
-(currently `v5.050`), so macOS remains covered even though discovery starts earlier.
+Pull requests and pushes resolve the current upstream `master` to an immutable
+commit and build every platform. No development-version cutoff is required.
 GitHub Actions are pinned to commits. Manylinux image digests are recorded in
 manifests, but the configured image tags and installed build dependencies can
 advance; these builds are not claimed to be bit-for-bit reproducible. Pin image

@@ -138,7 +138,7 @@ class DiscoveryTests(unittest.TestCase):
         label = "nightly-old-source"
         old_source = release(label, nightly=True, source_version="v1.000")
         self.assertTrue(complete(old_source, assets(label, "v1.000"), SHA))
-        self.assertFalse(complete(release(label, nightly=True), assets(label, "v1.000"), SHA))
+        self.assertTrue(complete(release(label, nightly=True), assets(label, "v1.000"), SHA))
         self.assertTrue(complete(release(label, nightly=True), assets(label), SHA))
         for bad_version in ([], 5048, "bad", "v1.002"):
             self.assertIsNone(release_state(release("v1.000", source_version=bad_version)))
@@ -192,7 +192,7 @@ class PublicationTests(unittest.TestCase):
             content = f"AC_INIT([Verilator],[{source_version[1:]} devel], [https://verilator.org])\n".encode()
             entry.size = len(content)
             archive.addfile(entry, io.BytesIO(content))
-        for platform in supported_platforms(source_version):
+        for platform in supported_platforms(label):
             install = self.directory / "install"
             install.mkdir()
             (install / "example.txt").write_text("fixture")
@@ -245,7 +245,7 @@ class PublicationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Mismatched source_version"):
             assemble(self.directory, "v1.000", SHA, RECIPE)
 
-    def test_nightly_of_old_commit_keeps_only_supported_platforms(self):
+    def test_nightly_includes_every_platform_regardless_of_source_version(self):
         label = "nightly-old-commit"
         api = FakeGitHub()
         api.release_list = [release("nightly-old", nightly=True)]
@@ -254,7 +254,8 @@ class PublicationTests(unittest.TestCase):
         publish(api, self.directory, "nightly", label, SHA, RECIPE)
         self.assertEqual({a["name"] for a in api.asset_list}, expected_assets(label, "v1.000"))
         self.assertTrue(complete(api.release_list[0], api.asset_list, SHA, RECIPE))
-        api.asset_list.append({"id": 100, "name": archive_name(label, "test-later"), "size": 1})
+        self.assertIn(archive_name(label, "test-later"), {a["name"] for a in api.asset_list})
+        api.asset_list.append({"id": 100, "name": "obsolete-upload.tar.gz", "size": 1})
         cleanup_nightly(api)
         self.assertEqual({a["name"] for a in api.asset_list}, expected_assets(label, "v1.000"))
 

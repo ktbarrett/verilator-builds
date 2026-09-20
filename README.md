@@ -10,9 +10,12 @@ There is also a special `nightly` release which builds every night.
 | --- | --- | --- |
 | `linux-x86_64` | glibc 2.17+, baseline x86-64 | v5.048 |
 | `linux-aarch64` | glibc 2.17+, ARMv8-A | v5.048 |
-| `macos-x86_64` | macOS 10.15+ | v5.050 |
+| `macos-x86_64` | macOS 10.15+ | v5.054 |
 | `macos-arm64` | macOS 11+ | v5.050 |
 | `windows-x86_64` | Windows 11, MSYS2 UCRT64 | v5.048 |
+
+Nightlies build the current upstream `master` on every platform, including Intel
+macOS ahead of its first supported stable release, `v5.054`.
 
 ## Use a package
 

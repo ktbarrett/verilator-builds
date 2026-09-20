@@ -59,7 +59,7 @@ def build(args):
         source_archive = source_archive_path(args.output, args.label)
         export_source(args.source, args.sha, source, source_archive)
         release = source_version((source / "configure.ac").read_text())
-        if args.platform not in supported_platforms(release):
+        if args.platform not in supported_platforms(args.label):
             raise ValueError(
                 f"{args.platform} requires Verilator {target['first_release']} or newer; "
                 f"source declares {release}"

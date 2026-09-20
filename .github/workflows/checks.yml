@@ -22,13 +22,13 @@ jobs:
       - run: ruff format --check .
       - run: python -m unittest discover -s tests -v
 
-  # Use the oldest release supported by every target, without release credentials.
+  # Exercise every target using the current upstream HEAD.
   packages:
     uses: ./.github/workflows/build.yml
     needs: resolve
     with:
       sha: ${{ needs.resolve.outputs.sha }}
-      label: ci-${{ github.run_id }}-${{ github.run_attempt }}
+      label: master
 
   resolve:
     runs-on: ubuntu-24.04

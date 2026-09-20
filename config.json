@@ -19,7 +19,7 @@
       "arch": "aarch64"
     },
     "macos-x86_64": {
-      "first_release": "v5.050",
+      "first_release": "v5.054",
       "runner": "macos-15-intel",
       "minimum": "10.15",
       "arch": "x86_64"

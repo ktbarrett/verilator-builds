@@ -14,13 +14,13 @@ def version(tag):
     return tuple(map(int, match.groups())) if match else None
 
 
-def supported_platforms(source_version):
-    """Apply inclusive per-platform release floors to a source version."""
-    parsed = version(source_version)
-    if parsed is None:
-        raise ValueError(f"Invalid source version: {source_version!r}")
+def supported_platforms(label):
+    """Apply release floors to version tags; build development labels on every target."""
+    parsed = version(validate_label(label))
     return [
-        name for name, target in PLATFORMS.items() if parsed >= version(target["first_release"])
+        name
+        for name, target in PLATFORMS.items()
+        if parsed is None or parsed >= version(target["first_release"])
     ]
 
 
@@ -45,10 +45,7 @@ def expected_assets(label, source_version=None):
     if version(label):
         if source_version is not None and source_version != label:
             raise ValueError("Release label and source version differ")
-        source_version = label
-    # Old nightly markers predate platform floors and always describe all targets.
-    platforms = PLATFORMS if source_version is None else supported_platforms(source_version)
-    return {archive_name(label, p) for p in platforms} | {
+    return {archive_name(label, p) for p in supported_platforms(label)} | {
         source_name(label),
         f"manifest-{label}.json",
         f"SHA256SUMS-{label}.txt",

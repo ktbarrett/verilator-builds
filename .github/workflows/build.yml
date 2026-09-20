@@ -24,9 +24,8 @@ jobs:
           persist-credentials: false
       - id: platforms
         env:
-          GH_TOKEN: ${{ github.token }}
-          SOURCE_SHA: ${{ inputs.sha }}
-        run: python3 -m tools.matrix --sha "$SOURCE_SHA"
+          BUILD_LABEL: ${{ inputs.label }}
+        run: python3 -m tools.matrix --label "$BUILD_LABEL"
 
   build:
     needs: platforms
