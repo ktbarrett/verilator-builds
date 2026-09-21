@@ -48,8 +48,8 @@ class GitHub:
         except GitHubNotFound:
             return None
 
-    def download(self, endpoint, destination):
-        """Stream release assets or upstream source tarballs directly to disk."""
+    def download(self, endpoint, destination, *, accept="application/octet-stream"):
+        """Stream a download using the endpoint's required API media type."""
         with destination.open("wb") as stream:
             self.run(
                 [
@@ -58,7 +58,7 @@ class GitHub:
                     "GET",
                     endpoint,
                     "--header",
-                    "Accept: application/octet-stream",
+                    f"Accept: {accept}",
                 ],
                 stdout=stream,
                 stderr=subprocess.PIPE,

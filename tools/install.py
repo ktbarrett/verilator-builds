@@ -109,7 +109,8 @@ def build_source(api, requested, work, prefix, platform, jobs, install_dependenc
     if not re.fullmatch(r"[0-9a-f]{40}", sha):
         raise ValueError("Upstream returned an invalid commit")
     archive = work / "source.tar.gz"
-    api.download(f"repos/{CONFIG['upstream']}/tarball/{sha}", archive)
+    # This API requires JSON negotiation, then redirects to the binary tarball.
+    api.download(f"repos/{CONFIG['upstream']}/tarball/{sha}", archive, accept="application/json")
     source = extract_archive(archive, work / "source")
     env = dependencies(platform, build=True, install=install_dependencies)
     actual = build_native(source, prefix, requested, sha, jobs, env)

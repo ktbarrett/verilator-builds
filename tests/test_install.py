@@ -256,9 +256,11 @@ class SourceTests(unittest.TestCase):
             with self.subTest(requested=requested), tempfile.TemporaryDirectory() as temp:
                 root = Path(temp)
 
-                def download_source(endpoint, destination):
-                    self.assertEqual(endpoint, f"repos/verilator/verilator/tarball/{SHA}")
-                    with tarfile.open(destination, "w:gz") as archive:
+                def download_source(arguments, **kwargs):
+                    self.assertIn(f"repos/verilator/verilator/tarball/{SHA}", arguments)
+                    # GitHub's archive endpoint rejects the release-asset media type.
+                    self.assertIn("Accept: application/json", arguments)
+                    with tarfile.open(fileobj=kwargs["stdout"], mode="w:gz") as archive:
                         data = b"AC_INIT([Verilator],[5.046], [])\n"
                         entry = tarfile.TarInfo("verilator-source/configure.ac")
                         entry.size = len(data)
@@ -266,7 +268,7 @@ class SourceTests(unittest.TestCase):
 
                 with (
                     patch("tools.github.GitHub.api", return_value={"sha": SHA}) as api,
-                    patch("tools.github.GitHub.download", side_effect=download_source),
+                    patch("tools.github.GitHub.run", side_effect=download_source),
                     patch("tools.install.dependencies", return_value={}),
                     patch("tools.install.build_native", return_value="v5.046") as build,
                 ):
