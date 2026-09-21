@@ -1,7 +1,9 @@
+import io
 import os
 import subprocess
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 from unittest.mock import patch
 
@@ -17,6 +19,7 @@ class GitHubTests(unittest.TestCase):
             with (
                 self.subTest(status=status),
                 patch("tools.github.subprocess.run", side_effect=error),
+                redirect_stderr(io.StringIO()) as diagnostics,
             ):
                 api = GitHub("example/repo")
                 if status == 404:
@@ -24,12 +27,17 @@ class GitHubTests(unittest.TestCase):
                 else:
                     with self.assertRaises(subprocess.CalledProcessError):
                         api.release("v5.048")
+                self.assertEqual(diagnostics.getvalue(), error.stderr)
 
     def test_cli_errors_do_not_look_like_missing_releases(self):
         error = subprocess.CalledProcessError(4, ["gh", "api"], stderr="Please set GH_TOKEN")
-        with patch("tools.github.subprocess.run", side_effect=error):
+        with (
+            patch("tools.github.subprocess.run", side_effect=error),
+            redirect_stderr(io.StringIO()) as diagnostics,
+        ):
             with self.assertRaises(subprocess.CalledProcessError):
                 GitHub("example/repo").release("v5.048")
+        self.assertEqual(diagnostics.getvalue(), "Please set GH_TOKEN\n")
 
     def test_token_is_scoped_to_gh_subprocesses(self):
         with patch.dict(os.environ, {"GH_TOKEN": "caller-token", "GH_HOST": "example.com"}):
@@ -72,11 +80,31 @@ class GitHubTests(unittest.TestCase):
     def test_deleted_asset_reports_not_found(self):
         error = subprocess.CalledProcessError(1, ["gh", "api"], stderr="gh: Not Found (HTTP 404)")
         with tempfile.TemporaryDirectory() as temp:
-            with patch("tools.github.subprocess.run", side_effect=error):
+            with (
+                patch("tools.github.subprocess.run", side_effect=error),
+                redirect_stderr(io.StringIO()) as diagnostics,
+            ):
                 with self.assertRaises(GitHubNotFound):
                     GitHub("example/repo").download(
                         "repos/example/repo/releases/assets/123", Path(temp) / "archive.tar.gz"
                     )
+            self.assertEqual(diagnostics.getvalue(), error.stderr + "\n")
+
+    def test_download_failure_emits_captured_diagnostic(self):
+        error = subprocess.CalledProcessError(
+            1, ["gh", "api"], stderr="gh: Unsupported Accept header (HTTP 415)\n"
+        )
+        with (
+            tempfile.TemporaryDirectory() as temp,
+            patch("tools.github.subprocess.run", side_effect=error),
+            redirect_stderr(io.StringIO()) as diagnostics,
+        ):
+            with self.assertRaises(subprocess.CalledProcessError) as raised:
+                GitHub("example/repo").download(
+                    "repos/example/repo/tarball/commit", Path(temp) / "source.tar.gz"
+                )
+        self.assertIs(raised.exception, error)
+        self.assertEqual(diagnostics.getvalue(), error.stderr)
 
     def test_publication_preserves_inherited_auth_and_json_input(self):
         with patch("tools.github.subprocess.run") as run:

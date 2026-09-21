@@ -4,6 +4,7 @@ import base64
 import json
 import os
 import subprocess
+import sys
 from urllib.parse import quote
 
 
@@ -23,6 +24,8 @@ class GitHub:
         try:
             return subprocess.run(["gh", *arguments], env=self.env, check=True, **kwargs)
         except subprocess.CalledProcessError as error:
+            if error.stderr:
+                print(error.stderr.rstrip(), file=sys.stderr, flush=True)
             if "(HTTP 404)" in (error.stderr or ""):
                 raise GitHubNotFound(error.stderr.strip()) from error
             raise
