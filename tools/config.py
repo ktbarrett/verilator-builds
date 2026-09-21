@@ -32,8 +32,7 @@ def validate_label(label):
 
 def archive_name(label, platform):
     validate_label(label)
-    suffix = "zip" if platform.startswith("windows-") else "tar.gz"
-    return f"verilator-{label}-{platform}.{suffix}"
+    return f"verilator-{label}-{platform}.tar.gz"
 
 
 def source_name(label):

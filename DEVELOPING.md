@@ -13,8 +13,8 @@ uploads into a draft and publishes only after every supported platform passes va
 Existing complete stable releases are preserved. A moved upstream tag causes an
 error rather than silently replacing its published binaries.
 
-Each platform has an inclusive `first_release` in `config.json`: Linux and Windows
-start at `v5.048`, macOS ARM64 at `v5.050`, and macOS Intel at `v5.054`. The top-level
+Each platform has an inclusive `first_release` in `config.json`: Linux starts
+at `v5.048`, macOS ARM64 at `v5.050`, and macOS Intel at `v5.054`. The top-level
 `first_release` controls automatic release discovery. Versioned labels use these
 release floors to select platforms. Development labels, including `master` and
 the generated nightly labels, build every platform. This same label determines the
@@ -40,8 +40,8 @@ attached `verilator-<label>-source.tar.gz` instead. Mirror tags identify packagi
 commits; manifests identify the upstream source commit.
 Manifests also record the declared source version. Publication verifies that stable
 labels and package metadata match the source archive. Discovery requires only the
-packages selected by the label: three for `v5.048`, four for `v5.050` and `v5.052`,
-and five from `v5.054` onward. Development labels always require every platform.
+packages selected by the label: two for `v5.048`, three for `v5.050` and `v5.052`,
+and four from `v5.054` onward. Development labels always require every platform.
 
 GitHub schedules can be delayed and run only from the default branch. GitHub may
 disable scheduled workflows in inactive public repositories; re-enable them in
@@ -88,9 +88,8 @@ GitHub API utilities also use `gh`. Responsibilities are separated:
 - `config.json`: discovery start, per-platform first releases, compatibility targets, runners, and images.
 
 Packaging explicitly sets the Perl launcher's data path to `../share/verilator`
-and public-script redirects to `../../../bin`, using forward slashes. This keeps
-the archive relocatable even when upstream's install-time path substitution
-produces incorrect paths under MSYS2. Users do not need to set `VERILATOR_ROOT`.
+and public-script redirects to `../../../bin`. This keeps the archive relocatable.
+Users do not need to set `VERILATOR_ROOT`.
 
 Build locally from an existing checkout without changing that checkout:
 
@@ -116,17 +115,11 @@ After configure, the build replaces `-latomic` with
 code in the executable while leaving glibc dynamically linked. The override is
 recorded in the package manifest and does not change generated simulation link flags.
 
-Windows builds use MSYS2's `/usr/bin/flex` with UCRT64 GCC. The build adds
-`-idirafter /usr/include` so GCC searches its standard UCRT64 headers first,
-then finds `FlexLexer.h` in the installed MSYS Flex package. No header is copied
-into the build directory. Use `-idirafter`, not `-I`, to preserve that search order.
-
 Every CI package is extracted to a new directory after its build source and
 staging installation have been removed. Validation checks version provenance,
 linting, generated C++ compilation, simulation results, VCD tracing, and coverage.
 ELF audits reject symbols above glibc 2.17 and external compiler runtimes; Mach-O
-audits check architecture, minimum OS, and system-only libraries; PE audits reject
-VC, GCC, MSYS, and other non-system DLL imports.
+audits check architecture, minimum OS, and system-only libraries.
 
 ```sh
 python3.12 -m unittest discover -s tests -v

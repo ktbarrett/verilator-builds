@@ -50,7 +50,6 @@ jobs:
           path: upstream
           persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
-        if: runner.os != 'Windows'
         with:
           python-version: '3.12'
       - name: Build Linux in manylinux
@@ -68,26 +67,11 @@ jobs:
           export PATH
           python -m tools.build --source upstream --platform "$BUILD_PLATFORM" \
             --sha "$SOURCE_SHA" --label "$BUILD_LABEL" --recipe "$RECIPE_SHA"
-      - uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2.31.0
-        if: runner.os == 'Windows'
-        with:
-          msystem: UCRT64
-          update: true
-          install: >-
-            autoconf bison flex make perl python git help2man
-            mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-zlib
-      - name: Build Windows with GCC
-        if: runner.os == 'Windows'
-        shell: msys2 {0}
-        run: >-
-          /usr/bin/python3 -m tools.build --source upstream --platform "$BUILD_PLATFORM"
-          --sha "$SOURCE_SHA" --label "$BUILD_LABEL" --recipe "$RECIPE_SHA"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: packages-${{ inputs.label }}-${{ matrix.platform }}
           path: |
             dist/*-${{ matrix.platform }}.tar.gz
-            dist/*-${{ matrix.platform }}.zip
             dist/${{ matrix.platform }}.manifest.json
           if-no-files-found: error
           retention-days: 1

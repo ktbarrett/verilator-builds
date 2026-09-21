@@ -54,7 +54,7 @@ def relocate_launchers(install):
         raise ValueError("Expected exactly one data-directory assignment in bin/verilator")
     launcher.write_text(contents)
     # These public-script redirects use the same install-time path substitution.
-    # Native executables are replaced separately; private utilities have no redirect.
+    # Private utilities have no redirect.
     for script in (install / "share/verilator/bin").iterdir():
         with script.open("rb") as stream:
             if stream.read(2) != b"#!":
@@ -69,9 +69,8 @@ def relocate_launchers(install):
             script.write_text(contents)
 
 
-def normalize_install(install, source, platform):
-    data = install / "share/verilator"
-    relocate_launchers(install)
+def normalize_makefile(makefile, platform):
+    """Make installed model-build tools usable on the consumer's host."""
     compiler = "clang++" if platform.startswith("macos-") else "g++"
     replacements = {
         "AR": "ar",
@@ -83,7 +82,6 @@ def normalize_install(install, source, platform):
         # A build host's optional mold installation must not leak to consumers.
         "CFG_LDFLAGS_VERILATED": "",
     }
-    makefile = data / "include/verilated.mk"
     contents = makefile.read_text()
     for variable, value in replacements.items():
         contents, count = re.subn(
@@ -95,34 +93,24 @@ def normalize_install(install, source, platform):
         if count != 1:
             raise ValueError(f"Expected exactly one {variable} in {makefile}")
     makefile.write_text(contents)
+
+
+def normalize_install(install, source, platform):
+    data = install / "share/verilator"
+    relocate_launchers(install)
+    makefile = data / "include/verilated.mk"
+    normalize_makefile(makefile, platform)
     pc = install / "share/pkgconfig/verilator.pc"
     pc.write_text(
         re.sub(r"^prefix=.*$", "prefix=${pcfiledir}/../..", pc.read_text(), flags=re.MULTILINE)
     )
-    # Upstream installs Perl redirects here, even for .exe files. CMake locates
-    # verilator_bin here and must get a real native executable on Windows.
-    for binary in (install / "bin").glob("verilator*bin*"):
-        shutil.copy2(binary, data / "bin" / binary.name)
     shutil.copy2(source / "LICENSE", install / "LICENSE.verilator")
     shutil.copytree(source / "LICENSES", install / "LICENSES", dirs_exist_ok=True)
     shutil.copytree(ROOT / "licenses", install / "LICENSES", dirs_exist_ok=True)
-    if platform.startswith("windows-"):
-        # Include the installed MinGW runtime and winpthreads notices too.
-        license_root = Path("/ucrt64/share/licenses")
-        found = False
-        for license_dir in license_root.glob("*"):
-            if any(name in license_dir.name for name in ("mingw-w64", "crt", "winpthread")):
-                shutil.copytree(
-                    license_dir, install / "LICENSES" / license_dir.name, dirs_exist_ok=True
-                )
-                found = True
-        if not found:
-            raise ValueError("MSYS2 runtime license files were not found")
     (install / "README.txt").write_text(
         "Verilator portable distribution\n\n"
         "Add this directory's bin/ to PATH; leave VERILATOR_ROOT unset.\n"
         "Requires Perl, Python 3, GNU make, and a compatible C++ compiler.\n"
-        "Windows: use the MSYS2 UCRT64 shell and MinGW-w64 GCC.\n"
         "Use installation and simulation build paths without spaces.\n"
         "Optional features may require zlib, an SMT solver, or SystemC.\n"
         "See manifest.json and the release page for source and build details.\n"
@@ -148,15 +136,12 @@ def create_archive(install, output, platform, label, sha, recipe, build_info):
     }
     (install / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     name = archive_name(label, platform)
-    root = output / name.removesuffix(".tar.gz").removesuffix(".zip")
+    root = output / name.removesuffix(".tar.gz")
     # Archive root is independent of the temporary staging directory name.
     shutil.move(install, root)
     try:
-        if name.endswith(".zip"):
-            shutil.make_archive(str(root), "zip", root.parent, root.name)
-        else:
-            with tarfile.open(output / name, "w:gz") as archive:
-                archive.add(root, arcname=root.name)
+        with tarfile.open(output / name, "w:gz") as archive:
+            archive.add(root, arcname=root.name)
     finally:
         shutil.rmtree(root)
     manifest["archive"] = name

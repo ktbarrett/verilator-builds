@@ -5,7 +5,6 @@ import json
 import os
 import re
 import tarfile
-import zipfile
 from pathlib import Path
 
 from .config import CONFIG, archive_name, expected_assets, source_name, supported_platforms, version
@@ -43,12 +42,8 @@ def assemble(directory, label, sha, recipe):
                 raise ValueError(f"Mismatched {field} in {platform} manifest")
         if manifest["sha256"] != sha256(archive):
             raise ValueError(f"Checksum mismatch: {name}")
-        if name.endswith(".zip"):
-            with zipfile.ZipFile(archive) as package:
-                embedded = json.loads(package.read(name[:-4] + "/manifest.json"))
-        else:
-            with tarfile.open(archive) as package:
-                embedded = json.load(package.extractfile(name[:-7] + "/manifest.json"))
+        with tarfile.open(archive) as package:
+            embedded = json.load(package.extractfile(name[:-7] + "/manifest.json"))
         if embedded != {k: v for k, v in manifest.items() if k not in {"archive", "sha256"}}:
             raise ValueError(f"Embedded manifest mismatch: {name}")
         manifests.append(manifest)

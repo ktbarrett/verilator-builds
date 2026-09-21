@@ -29,12 +29,6 @@
       "runner": "macos-26",
       "minimum": "11.0",
       "arch": "arm64"
-    },
-    "windows-x86_64": {
-      "first_release": "v5.048",
-      "runner": "windows-2022",
-      "minimum": "Windows 11 (MSYS2 UCRT64)",
-      "arch": "x86_64"
     }
   }
 }

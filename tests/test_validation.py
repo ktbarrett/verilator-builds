@@ -1,6 +1,6 @@
 import unittest
 
-from tools.validate import check_linux, check_macos, check_windows
+from tools.validate import check_linux, check_macos
 
 
 class CompatibilityTests(unittest.TestCase):
@@ -48,19 +48,6 @@ class CompatibilityTests(unittest.TestCase):
                 "11.0",
                 "arm64",
             )
-
-    def test_windows_accepts_ucrt_and_rejects_external_runtimes(self):
-        check_windows("pei-x86-64\n DLL Name: KERNEL32.dll\n DLL Name: ucrtbase.dll")
-        for dll in (
-            "VCRUNTIME140.dll",
-            "MSVCP140.dll",
-            "libstdc++-6.dll",
-            "libgcc_s_seh-1.dll",
-            "libwinpthread-1.dll",
-            "msys-2.0.dll",
-        ):
-            with self.assertRaisesRegex(ValueError, "Non-system"):
-                check_windows(f"pei-x86-64\n DLL Name: {dll}")
 
 
 if __name__ == "__main__":

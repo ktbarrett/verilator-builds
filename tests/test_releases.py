@@ -31,7 +31,7 @@ def setUpModule():
             PLATFORMS,
             {
                 "linux-x86_64": {"first_release": "v1.000", "minimum": "test"},
-                "windows-x86_64": {"first_release": "v1.000", "minimum": "test"},
+                "linux-aarch64": {"first_release": "v1.000", "minimum": "test"},
                 "test-later": {"first_release": "v1.002", "minimum": "test"},
             },
             clear=True,
@@ -223,7 +223,7 @@ class PublicationTests(unittest.TestCase):
         self.packages("v1.000")
         with self.assertRaisesRegex(ValueError, "Mismatched sha"):
             assemble(self.directory, "v1.000", "c" * 40, RECIPE)
-        (self.directory / "windows-x86_64.manifest.json").unlink()
+        (self.directory / "linux-aarch64.manifest.json").unlink()
         with self.assertRaises(FileNotFoundError):
             assemble(self.directory, "v1.000", SHA, RECIPE)
 

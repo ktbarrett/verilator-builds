@@ -35,11 +35,11 @@ class LauncherTests(unittest.TestCase):
             private = data / "bin/private"
             private.write_text('#!/usr/bin/env perl\nprint "private";\n')
             original = private.read_bytes()
-            native = data / "bin/verilator_bin.exe"
-            native.write_bytes(b"MZ\xff\x00")
+            native = data / "bin/verilator_bin"
+            native.write_bytes(b"\x7fELF\xff\x00")
             relocate_launchers(install)
             self.assertEqual(private.read_bytes(), original)
-            self.assertEqual(native.read_bytes(), b"MZ\xff\x00")
+            self.assertEqual(native.read_bytes(), b"\x7fELF\xff\x00")
             moved = root / "relocated"
             install.rename(moved)
             for path in ("bin/verilator", "share/verilator/bin/verilator"):

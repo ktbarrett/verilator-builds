@@ -7,7 +7,6 @@ import re
 import subprocess
 import tarfile
 import tempfile
-import zipfile
 from pathlib import Path
 
 from .config import PLATFORMS, ROOT
@@ -63,32 +62,6 @@ def check_macos(libraries, commands, architecture, minimum, arch):
         raise ValueError("Unexpected Mach-O library search path")
 
 
-def check_windows(imports):
-    if "pei-x86-64" not in imports:
-        raise ValueError("Expected an x86-64 PE executable")
-    allowed = {
-        "kernel32.dll",
-        "advapi32.dll",
-        "bcrypt.dll",
-        "msvcrt.dll",
-        "ucrtbase.dll",
-        "user32.dll",
-        "ws2_32.dll",
-        "shell32.dll",
-        "ole32.dll",
-        "ntdll.dll",
-        "psapi.dll",
-        "secur32.dll",
-    }
-    dlls = re.findall(r"DLL Name:\s+(\S+)", imports)
-    if not dlls:
-        raise ValueError("No Windows import table found")
-    for dll in dlls:
-        name = dll.lower()
-        if name not in allowed and not name.startswith(("api-ms-win-", "ext-ms-win-")):
-            raise ValueError(f"Non-system Windows DLL dependency: {dll}")
-
-
 def audit(binary, platform):
     target = PLATFORMS[platform]
     if platform.startswith("linux-"):
@@ -106,19 +79,13 @@ def audit(binary, platform):
             target["minimum"],
             target["arch"],
         )
-    else:
-        check_windows(output("objdump", "-p", binary))
 
 
 def validate_archive(archive, platform, sha, skip_abi_audit=False):
     with tempfile.TemporaryDirectory(prefix="verilator-smoke-") as temp:
         root = Path(temp)
-        if archive.suffix == ".zip":
-            with zipfile.ZipFile(archive) as package:
-                package.extractall(root)
-        else:
-            with tarfile.open(archive) as package:
-                package.extractall(root, filter="data")
+        with tarfile.open(archive) as package:
+            package.extractall(root, filter="data")
         (install,) = root.iterdir()
         manifest = json.loads((install / "manifest.json").read_text())
         if manifest["sha"] != sha or manifest["platform"] != platform:
@@ -166,8 +133,6 @@ def validate_archive(archive, platform, sha, skip_abi_audit=False):
             ["make", "-C", "obj_dir", "-f", "Vtop.mk", "-j2"], cwd=model, env=env, check=True
         )
         executable = model / "obj_dir/Vtop"
-        if platform.startswith("windows-"):
-            executable = executable.with_suffix(".exe")
         result = output(executable, cwd=model, env=env)
         if "simulation passed" not in result:
             raise ValueError("Simulation failed")
