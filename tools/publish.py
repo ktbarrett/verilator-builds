@@ -8,9 +8,9 @@ import tarfile
 from pathlib import Path
 
 from .config import CONFIG, archive_name, expected_assets, source_name, supported_platforms, version
-from .discover import MARKER, complete, release_state
 from .github import GitHub
 from .package import sha256
+from .releases import MARKER, complete, release_state
 from .upstream import archive_version
 
 

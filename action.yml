@@ -1,0 +1,56 @@
+name: Setup Verilator
+description: Install a Verilator release or nightly, building from source when no binary is available.
+author: ktbarrett
+branding:
+  icon: cpu
+  color: blue
+
+inputs:
+  version:
+    description: Verilator version (for example, v5.048 or 5.048), or nightly
+    required: true
+  token:
+    description: GitHub token used by gh for metadata and downloads
+    default: ${{ github.token }}
+  install-dependencies:
+    description: Install missing runtime tools and source build dependencies using apt or Homebrew
+    default: 'true'
+  force-source:
+    description: Build from source even when a binary is available
+    default: 'false'
+  jobs:
+    description: Number of parallel jobs when building from source
+    default: '2'
+
+outputs:
+  version:
+    description: Installed upstream version, including the v prefix
+    value: ${{ steps.install.outputs.version }}
+  path:
+    description: Installation prefix
+    value: ${{ steps.install.outputs.path }}
+  source-sha:
+    description: Full upstream commit used by the installation
+    value: ${{ steps.install.outputs.source-sha }}
+  built-from-source:
+    description: Whether Verilator was built from source (true or false)
+    value: ${{ steps.install.outputs.built-from-source }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+      with:
+        python-version: '3.12'
+    - name: Install Verilator
+      id: install
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      env:
+        INSTALL_VERSION: ${{ inputs.version }}
+        INSTALL_TOKEN: ${{ inputs.token }}
+        INSTALL_DEPENDENCIES: ${{ inputs.install-dependencies }}
+        INSTALL_FORCE_SOURCE: ${{ inputs.force-source }}
+        INSTALL_JOBS: ${{ inputs.jobs }}
+        INSTALL_REPOSITORY: ${{ github.action_repository || github.repository }}
+      run: python -m tools.install

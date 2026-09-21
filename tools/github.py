@@ -2,26 +2,65 @@
 
 import base64
 import json
+import os
 import subprocess
 from urllib.parse import quote
 
 
+class GitHubNotFound(RuntimeError):
+    """The requested GitHub resource returned HTTP 404."""
+
+
 class GitHub:
-    def __init__(self, repository):
+    def __init__(self, repository, token=None):
         self.repository = repository
+        # Keep the action's token local to gh subprocesses, out of source builds.
+        self.env = (
+            None if token is None else {**os.environ, "GH_TOKEN": token, "GH_HOST": "github.com"}
+        )
+
+    def run(self, arguments, **kwargs):
+        try:
+            return subprocess.run(["gh", *arguments], env=self.env, check=True, **kwargs)
+        except subprocess.CalledProcessError as error:
+            if "(HTTP 404)" in (error.stderr or ""):
+                raise GitHubNotFound(error.stderr.strip()) from error
+            raise
 
     def api(self, endpoint, method="GET", data=None):
-        command = ["gh", "api", "--method", method, endpoint]
+        command = ["api", "--method", method, endpoint]
         if data is not None:
             command += ["--input", "-"]
-        result = subprocess.run(
+        result = self.run(
             command,
             input=json.dumps(data) if data is not None else None,
             text=True,
             capture_output=True,
-            check=True,
         )
         return json.loads(result.stdout) if result.stdout.strip() else None
+
+    def release(self, tag):
+        try:
+            return self.api(f"repos/{self.repository}/releases/tags/{quote(tag, safe='')}")
+        except GitHubNotFound:
+            return None
+
+    def download(self, endpoint, destination):
+        """Stream release assets or upstream source tarballs directly to disk."""
+        with destination.open("wb") as stream:
+            self.run(
+                [
+                    "api",
+                    "--method",
+                    "GET",
+                    endpoint,
+                    "--header",
+                    "Accept: application/octet-stream",
+                ],
+                stdout=stream,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
 
     def pages(self, endpoint):
         page = 1
@@ -51,9 +90,8 @@ class GitHub:
         return base64.b64decode(result["content"]).decode()
 
     def upload(self, tag, paths):
-        subprocess.run(
+        self.run(
             [
-                "gh",
                 "release",
                 "upload",
                 tag,
@@ -62,5 +100,4 @@ class GitHub:
                 "--clobber",
                 *map(str, paths),
             ],
-            check=True,
         )

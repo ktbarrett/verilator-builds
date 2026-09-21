@@ -15,10 +15,11 @@ from tools.config import (
     source_name,
     supported_platforms,
 )
-from tools.discover import MARKER, complete, discover, release_state
+from tools.discover import discover
 from tools.github import GitHub
 from tools.package import create_archive, sha256
 from tools.publish import assemble, cleanup_nightly, publish
+from tools.releases import MARKER, complete, release_state
 
 SHA = "a" * 40
 RECIPE = "b" * 40
