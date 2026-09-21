@@ -52,9 +52,9 @@ class GitHubTests(unittest.TestCase):
             self.assertEqual(os.environ["GH_TOKEN"], "caller-token")
             self.assertEqual(os.environ["GH_HOST"], "example.com")
 
-    def test_download_streams_binary_without_text_conversion(self):
+    def test_source_download_streams_binary_without_text_conversion(self):
         data = b"\x1f\x8b\xff\x00\r\n"
-        endpoint = "repos/example/repo/releases/assets/123"
+        endpoint = "repos/example/repo/tarball/commit"
 
         def run(command, **kwargs):
             self.assertEqual(
@@ -65,8 +65,6 @@ class GitHubTests(unittest.TestCase):
                     "--method",
                     "GET",
                     endpoint,
-                    "--header",
-                    "Accept: application/octet-stream",
                 ],
             )
             kwargs["stdout"].write(data)
@@ -74,8 +72,31 @@ class GitHubTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             destination = Path(temp) / "archive.tar.gz"
             with patch("tools.github.subprocess.run", side_effect=run):
-                GitHub("example/repo").download(endpoint, destination)
+                GitHub("example/repo").download_source("example/repo", "commit", destination)
             self.assertEqual(destination.read_bytes(), data)
+
+    def test_named_assets_use_release_download(self):
+        assets = {
+            "verilator-nightly-generation.tar.gz": b"\x1f\x8b\xff",
+            "SHA256SUMS.txt": b"hash\n",
+        }
+
+        def run(command, **kwargs):
+            self.assertEqual(
+                command[:6], ["gh", "release", "download", "nightly", "--repo", "example/repo"]
+            )
+            directory = Path(command[command.index("--dir") + 1])
+            names = [command[i + 1] for i, value in enumerate(command) if value == "--pattern"]
+            self.assertEqual(set(names), set(assets))
+            for name in names:
+                (directory / name).write_bytes(assets[name])
+
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            with patch("tools.github.subprocess.run", side_effect=run):
+                GitHub("example/repo").download_assets("nightly", list(assets), directory)
+            for name, data in assets.items():
+                self.assertEqual((directory / name).read_bytes(), data)
 
     def test_deleted_asset_reports_not_found(self):
         error = subprocess.CalledProcessError(1, ["gh", "api"], stderr="gh: Not Found (HTTP 404)")
@@ -85,10 +106,39 @@ class GitHubTests(unittest.TestCase):
                 redirect_stderr(io.StringIO()) as diagnostics,
             ):
                 with self.assertRaises(GitHubNotFound):
-                    GitHub("example/repo").download(
-                        "repos/example/repo/releases/assets/123", Path(temp) / "archive.tar.gz"
+                    GitHub("example/repo").download_assets(
+                        "nightly", ["archive.tar.gz"], Path(temp)
                     )
             self.assertEqual(diagnostics.getvalue(), error.stderr + "\n")
+
+    def test_partial_pattern_match_reports_missing_asset(self):
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            (directory / "checksums.txt").write_text("checksum\n")
+            with patch("tools.github.subprocess.run"):
+                with self.assertRaisesRegex(GitHubNotFound, "archive.tar.gz"):
+                    GitHub("example/repo").download_assets(
+                        "nightly", ["checksums.txt", "archive.tar.gz"], directory
+                    )
+
+    def test_failed_release_download_rechecks_asset_availability(self):
+        for available in ([], [{"name": "archive.tar.gz", "size": 1}]):
+            error = subprocess.CalledProcessError(
+                1, ["gh", "release", "download"], stderr="Download failed\n"
+            )
+            api = GitHub("example/repo")
+            with (
+                self.subTest(available=available),
+                tempfile.TemporaryDirectory() as temp,
+                patch("tools.github.subprocess.run", side_effect=error),
+                patch.object(api, "release", return_value={"id": 1}),
+                patch.object(api, "assets", return_value=available),
+                redirect_stderr(io.StringIO()) as diagnostics,
+            ):
+                expected = subprocess.CalledProcessError if available else GitHubNotFound
+                with self.assertRaises(expected):
+                    api.download_assets("nightly", ["archive.tar.gz"], Path(temp))
+                self.assertEqual(diagnostics.getvalue(), error.stderr)
 
     def test_download_failure_emits_captured_diagnostic(self):
         error = subprocess.CalledProcessError(
@@ -100,8 +150,8 @@ class GitHubTests(unittest.TestCase):
             redirect_stderr(io.StringIO()) as diagnostics,
         ):
             with self.assertRaises(subprocess.CalledProcessError) as raised:
-                GitHub("example/repo").download(
-                    "repos/example/repo/tarball/commit", Path(temp) / "source.tar.gz"
+                GitHub("example/repo").download_source(
+                    "example/repo", "commit", Path(temp) / "source.tar.gz"
                 )
         self.assertIs(raised.exception, error)
         self.assertEqual(diagnostics.getvalue(), error.stderr)

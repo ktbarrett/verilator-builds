@@ -64,7 +64,7 @@ class InstallTests(unittest.TestCase):
         self.destination = self.root / "destination"
         self.destination.mkdir()
         self.api = self.enterContext(patch("tools.github.GitHub.api", side_effect=self.read_api))
-        self.enterContext(patch("tools.github.GitHub.download", side_effect=self.download))
+        self.enterContext(patch("tools.github.GitHub.download_assets", side_effect=self.download))
         self.enterContext(patch("tools.install.runner_platform", return_value="linux-x86_64"))
         self.enterContext(patch("tools.install.dependencies", return_value=os.environ.copy()))
         self.build = self.enterContext(
@@ -116,12 +116,11 @@ class InstallTests(unittest.TestCase):
         page = int(endpoint.rsplit("=", 1)[1])
         return self.asset_list[(page - 1) * 100 : page * 100]
 
-    def download(self, endpoint, destination):
-        self.downloads.append(endpoint)
-        self.downloaded_names.append(destination.name)
-        asset_id = int(endpoint.rsplit("/", 1)[1])
-        asset = next(a for a in self.asset_list if a.get("id") == asset_id)
-        shutil.copyfile(self.assets / asset["name"], destination)
+    def download(self, tag, names, directory):
+        self.downloads.append((tag, names))
+        self.downloaded_names.extend(names)
+        for name in names:
+            shutil.copyfile(self.assets / name, directory / name)
 
     def build_source(self, api, requested, work, prefix, platform, jobs, install_dependencies):
         actual = "v5.049" if requested == "nightly" else requested
@@ -139,9 +138,7 @@ class InstallTests(unittest.TestCase):
         self.assertTrue((Path(result["path"]) / "bin/verilator").is_file())
         self.assertEqual(list(self.destination.iterdir()), [Path(result["path"])])
         self.build.assert_not_called()
-        self.assertTrue(
-            all(f"repos/{REPOSITORY}/releases/assets/" in endpoint for endpoint in self.downloads)
-        )
+        self.assertTrue(all(tag == "v5.048" for tag, _ in self.downloads))
 
     def test_nightly_uses_published_generation_and_paginates_assets(self):
         self.package("nightly-successful", nightly=True)
@@ -185,7 +182,7 @@ class InstallTests(unittest.TestCase):
 
     def test_deleted_nightly_assets_fall_back_to_source(self):
         self.package("nightly-old", nightly=True)
-        with patch("tools.github.GitHub.download", side_effect=GitHubNotFound("HTTP 404")):
+        with patch("tools.github.GitHub.download_assets", side_effect=GitHubNotFound("HTTP 404")):
             self.assertEqual(self.install("nightly")["built-from-source"], "true")
 
     def test_corrupt_archive_is_rejected_without_source_fallback(self):
@@ -258,8 +255,8 @@ class SourceTests(unittest.TestCase):
 
                 def download_source(arguments, **kwargs):
                     self.assertIn(f"repos/verilator/verilator/tarball/{SHA}", arguments)
-                    # GitHub's archive endpoint rejects the release-asset media type.
-                    self.assertIn("Accept: application/json", arguments)
+                    # Use gh's API defaults; the asset media type causes HTTP 415 here.
+                    self.assertNotIn("--header", arguments)
                     with tarfile.open(fileobj=kwargs["stdout"], mode="w:gz") as archive:
                         data = b"AC_INIT([Verilator],[5.046], [])\n"
                         entry = tarfile.TarInfo("verilator-source/configure.ac")

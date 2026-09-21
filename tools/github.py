@@ -48,18 +48,40 @@ class GitHub:
         except GitHubNotFound:
             return None
 
-    def download(self, endpoint, destination, *, accept="application/octet-stream"):
-        """Stream a download using the endpoint's required API media type."""
+    def download_assets(self, tag, names, directory):
+        """Let gh find and download the named release assets."""
+        command = ["release", "download", tag, "--repo", self.repository, "--dir", str(directory)]
+        for name in names:
+            command.extend(["--pattern", name])
+        try:
+            self.run(command, stderr=subprocess.PIPE, text=True)
+        except subprocess.CalledProcessError as error:
+            # The rolling nightly can remove assets between lookup and download.
+            # Recheck availability instead of parsing gh's human-readable errors.
+            release = self.release(tag)
+            available = (
+                {asset["name"] for asset in self.assets(release) if asset.get("size", 0) > 0}
+                if release is not None
+                else set()
+            )
+            missing = set(names) - available
+            if missing:
+                raise GitHubNotFound(
+                    f"Release assets are unavailable: {', '.join(sorted(missing))}"
+                ) from error
+            raise
+        # Multiple patterns can match only a subset of the requested assets.
+        missing = {name for name in names if not (directory / name).is_file()}
+        if missing:
+            raise GitHubNotFound(
+                f"Release assets were not downloaded: {', '.join(sorted(missing))}"
+            )
+
+    def download_source(self, repository, ref, destination):
+        """Fetch an upstream archive using gh's default API headers and redirects."""
         with destination.open("wb") as stream:
             self.run(
-                [
-                    "api",
-                    "--method",
-                    "GET",
-                    endpoint,
-                    "--header",
-                    f"Accept: {accept}",
-                ],
+                ["api", "--method", "GET", f"repos/{repository}/tarball/{quote(ref, safe='')}"],
                 stdout=stream,
                 stderr=subprocess.PIPE,
                 text=True,

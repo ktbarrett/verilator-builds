@@ -53,10 +53,10 @@ def published_package(api, requested, platform):
         raise ValueError("Published release has an invalid upstream commit")
     name = archive_name(state["label"], platform)
     checksums = f"SHA256SUMS-{state['label']}.txt"
-    assets = {asset["name"]: asset for asset in api.assets(release) if asset.get("size", 0) > 0}
-    if not {name, checksums} <= assets.keys():
+    assets = {asset["name"] for asset in api.assets(release) if asset.get("size", 0) > 0}
+    if not {name, checksums} <= assets:
         return None
-    return {**state, "archive_id": assets[name]["id"], "checksums_id": assets[checksums]["id"]}
+    return state
 
 
 def extract_archive(archive, destination):
@@ -71,9 +71,7 @@ def extract_archive(archive, destination):
 def install_package(api, requested, platform, state, work, prefix):
     name = archive_name(state["label"], platform)
     checksums = f"SHA256SUMS-{state['label']}.txt"
-    base = f"repos/{api.repository}/releases/assets"
-    api.download(f"{base}/{state['checksums_id']}", work / checksums)
-    api.download(f"{base}/{state['archive_id']}", work / name)
+    api.download_assets(requested, [checksums, name], work)
     matches = re.findall(
         rf"^([0-9a-f]{{64}})  {re.escape(name)}$",
         (work / checksums).read_text(),
@@ -109,8 +107,7 @@ def build_source(api, requested, work, prefix, platform, jobs, install_dependenc
     if not re.fullmatch(r"[0-9a-f]{40}", sha):
         raise ValueError("Upstream returned an invalid commit")
     archive = work / "source.tar.gz"
-    # This API requires JSON negotiation, then redirects to the binary tarball.
-    api.download(f"repos/{CONFIG['upstream']}/tarball/{sha}", archive, accept="application/json")
+    api.download_source(CONFIG["upstream"], sha, archive)
     source = extract_archive(archive, work / "source")
     env = dependencies(platform, build=True, install=install_dependencies)
     actual = build_native(source, prefix, requested, sha, jobs, env)

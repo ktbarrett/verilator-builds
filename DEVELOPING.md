@@ -138,9 +138,10 @@ advance; these builds are not claimed to be bit-for-bit reproducible. Pin image
 digests in `config.json` when a fixed build environment is desired. New upstream
 submodules deliberately stop source export until the source packaging is updated.
 
-The setup action uses the shared `gh` adapter to read GitHub metadata and download
-release assets and upstream source tarballs. It looks up releases
-in the action's repository, not the consumer's repository. The nightly release's
+The setup action uses the shared `gh` adapter: `gh release download` fetches named
+release assets, and `gh api` fetches upstream source archives with its default
+headers and redirect handling. The installer does not construct download URLs.
+It looks up releases in the action's repository. The nightly release's
 state marker selects its successful generation, so pending uploads are ignored.
 A missing release, platform archive, or deleted asset triggers a source build;
 authentication, rate-limit, and checksum failures fail the installation.
