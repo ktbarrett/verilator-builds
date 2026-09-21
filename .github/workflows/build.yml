@@ -28,6 +28,7 @@ jobs:
         run: python3 -m tools.matrix --label "$BUILD_LABEL"
 
   build:
+    name: Build ${{ inputs.label }} (${{ matrix.platform }})
     needs: platforms
     strategy:
       fail-fast: false
