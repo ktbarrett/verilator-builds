@@ -75,8 +75,27 @@ releases for the rolling nightly, which requires asset deletion and tag updates.
 
 ## Maintain and test the recipes
 
-Standalone utilities are Python modules using the standard library (Python 3.12+).
-GitHub API utilities also use `gh`. Responsibilities are separated:
+Use [uv](https://docs.astral.sh/uv/) to create the Python 3.12+ development
+environment and install the project dependencies and development tools:
+
+```sh
+uv sync --python 3.12
+uv run pre-commit install
+```
+
+`uv sync` creates `.venv/` and resolves dependencies into `uv.lock`. Commit the
+lockfile after the initial environment setup. This repository is a collection of
+tools run from its checkout, so uv manages dependencies without building or
+installing the repository as a Python package. Environment activation is optional;
+use `uv run` to execute commands in it.
+
+The pre-commit hooks run Ruff lint fixes followed by formatting. Review and stage
+any changes they make before committing again. Both hooks and the development
+dependency use Ruff 0.16.6; update their versions together.
+
+The current utilities still use the standard library and `gh`. The dependencies
+for the planned refactor below are declared now so the environment is ready for
+that work. Responsibilities are separated:
 
 - `tools/discover.py`: resolve requested source revisions and find missing releases.
 - `tools/upstream.py`: read the source version from upstream metadata.
@@ -95,7 +114,7 @@ Users do not need to set `VERILATOR_ROOT`.
 Build locally from an existing checkout without changing that checkout:
 
 ```sh
-python3.12 -m tools.build --source ../verilator \
+uv run python -m tools.build --source ../verilator \
   --sha "$(git -C ../verilator rev-parse 'v5.048^{commit}')" \
   --label v5.048 --recipe "$(git rev-parse HEAD)" --platform linux-x86_64
 ```
@@ -123,10 +142,13 @@ ELF audits reject symbols above glibc 2.17 and external compiler runtimes; Mach-
 audits check architecture, minimum OS, and system-only libraries.
 
 ```sh
-python3.12 -m unittest discover -s tests -v
-ruff check .
-ruff format --check .
+uv run python -m pytest
+uv run pre-commit run --all-files
 ```
+
+The Python CI job uses the same environment setup, hooks, and test command.
+Pytest runs the existing unittest tests without converting them. To check Ruff
+without editing files, run `uv run ruff check .` and `uv run ruff format --check .`.
 
 Pull requests and pushes resolve the current upstream `master` to an immutable
 commit and build every platform. No development-version cutoff is required.
@@ -135,3 +157,47 @@ manifests, but the configured image tags and installed build dependencies can
 advance; these builds are not claimed to be bit-for-bit reproducible. Pin image
 digests in `config.json` when a fixed build environment is desired. New upstream
 submodules deliberately stop source export until the source packaging is updated.
+
+## Planned Python dependency refactor
+
+Implement this after the development environment is set up. The dependencies
+below are declared in `pyproject.toml`; the build and publication implementation
+has not yet been changed to use them.
+
+| Dependency | Owning code | Proposed change |
+| --- | --- | --- |
+| PyGithub | `tools/github.py`, consumed by discovery and publication | Replace `gh` subprocess calls, manual pagination, content decoding, release uploads, and tag updates with the GitHub client. Keep authentication and error handling in the adapter. |
+| Pydantic 2 | `tools/config.py`, `tools/releases.py`, and a focused manifest module shared by packaging, publication, and validation | Validate configuration, release state, and manifests at their input boundaries. Share explicit models instead of repeating dictionary shape checks. |
+| pyelftools | ELF audit code currently in `tools/validate.py` | Read ELF machine type, dynamic dependencies, RPATH/RUNPATH, and GNU symbol-version requirements directly instead of parsing `readelf` and `objdump` output. |
+| macholib | Mach-O audit code currently in `tools/validate.py` | Read architecture, dylib dependencies, deployment targets, and RPATH load commands directly instead of parsing `otool` and `lipo` output. |
+| pytest and responses (development) | `tests/` | Gradually replace repeated unittest setup with fixtures and parameterization; test the GitHub adapter with mocked HTTP responses, including pagination, failures, and interrupted publication. |
+
+Keep the ELF and Mach-O readers in focused modules if the implementations outgrow
+`tools/validate.py`; that module should continue to own archive and smoke-test
+orchestration. Install both readers on every development platform so their
+fixture-based tests can run together. Compare the new readers against the native
+tools on real packages for all four targets before replacing the current audits.
+
+Preserve the existing manifest schema and optional legacy release-state fields.
+Pydantic models should reject invalid types without silently coercing provenance
+fields. Source/recipe matching, checksums, platform support floors, and publication
+ordering remain explicit domain rules. In particular, failed nightly uploads must
+preserve the previous generation, and complete stable releases must stay intact.
+PyGithub upload handling must preserve the existing replacement semantics and
+post-upload size/digest verification; mutating operations need deliberate retry
+behavior. Continue taking credentials from the job environment.
+
+Keep `argparse`, `pathlib`, `tarfile`, `hashlib`, and `subprocess` for their current
+roles. Git source export and the compiler/build tools are already short, direct
+CLI operations; a Git or process-wrapper dependency would add little here.
+Verilator's `vN.NNN` tags and development labels need their existing domain rules,
+so a general Python package-version parser would not replace them. PyGithub
+provides the required HTTP client; no separate runtime HTTP dependency is needed.
+
+Refactor the GitHub adapter and metadata validation first, then the binary readers,
+using the existing release and packaging tests as behavior checks. As each runtime
+dependency is adopted, update every invoking workflow and the manylinux container
+setup to install the locked dependencies. Use a separate environment inside the
+container rather than reusing the host `.venv/`, and verify dependency installation
+on both manylinux architectures and both macOS targets. Once `uv.lock` is committed,
+make CI use `uv sync --locked` so dependency drift fails visibly.

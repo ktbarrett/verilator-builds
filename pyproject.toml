@@ -1,3 +1,30 @@
+[project]
+name = "verilator-builds"
+version = "0.1.0"
+description = "Build, validate, and publish portable Verilator distributions."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "PyGithub>=2,<3",
+    "pydantic>=2,<3",
+    "pyelftools>=0.32,<1",
+    "macholib>=1.16,<2",
+]
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4,<5",
+    "pytest>=8,<10",
+    "responses>=0.25,<1",
+    "ruff==0.16.6",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
 [tool.ruff]
 target-version = "py312"
 line-length = 100
