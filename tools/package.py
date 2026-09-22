@@ -79,6 +79,9 @@ def normalize_makefile(makefile, platform):
         "PERL": "perl",
         "PYTHON3": "python3",
         "OBJCACHE": "",
+        # Supported consumer compilers accept explicit C++14/C++20 selection.
+        "CFG_CXXFLAGS_STD": "-std=c++14",
+        "CFG_CXXFLAGS_COROUTINES": "-std=c++20",
         # A build host's optional mold installation must not leak to consumers.
         "CFG_LDFLAGS_VERILATED": "",
     }
