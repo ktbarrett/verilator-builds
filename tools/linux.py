@@ -103,10 +103,14 @@ def main():
                 "-e",
                 "GITHUB_ACTIONS=true",
                 digest,
-                "/opt/python/cp312-cp312/bin/python3",
-                "-m",
-                "tools.linux",
-                "--inside",
+                "bash",
+                "-euc",
+                "/opt/python/cp312-cp312/bin/python3 -m pip install uv==0.12.17\n"
+                "export PATH=/opt/python/cp312-cp312/bin:$PATH\n"
+                "export UV_PROJECT_ENVIRONMENT=/tmp/verilator-builds-venv\n"
+                "uv sync --locked --no-dev --python /opt/python/cp312-cp312/bin/python3\n"
+                'exec uv run --no-sync python -m tools.linux --inside "$@"',
+                "--",
                 *sys.argv[1:],
             ],
             check=True,

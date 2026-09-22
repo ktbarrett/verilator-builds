@@ -1,54 +1,113 @@
-import unittest
+"""Test our compatibility policy against parsed metadata supplied by the readers."""
 
-from tools.validate import check_linux, check_macos
+from types import SimpleNamespace as Record
+from unittest.mock import MagicMock
 
+import pytest
+from elftools.elf.dynamic import DynamicSegment
+from elftools.elf.gnuversions import GNUVerNeedSection
+from macholib import mach_o
+from macholib.ptypes import sizeof
 
-class CompatibilityTests(unittest.TestCase):
-    def test_linux_rejects_new_glibc_and_runtime_dependencies(self):
-        header = "Machine: Advanced Micro Devices X86-64"
-        dynamic = "(NEEDED) Shared library: [libc.so.6]"
-        check_linux(dynamic, "x@GLIBC_2.17", header, "x86_64")
-        for symbols in (
-            "x@GLIBC_2.18",
-            "x@GLIBC_2.27",
-            "x@GLIBCXX_3.4.20",
-            "x@GCC_3.0",
-            "0000 DF *UND* 0 (GLIBC_2.25) getrandom",
-            "0000 DF *UND* 0 (GLIBCXX_3.4.20) foo",
-        ):
-            with self.assertRaises(ValueError):
-                check_linux(dynamic, symbols, header, "x86_64")
-        for library in ("libstdc++.so.6", "libgcc_s.so.1", "libatomic.so.1", "libjemalloc.so.2"):
-            with self.assertRaises(ValueError):
-                check_linux(f"(NEEDED) [{library}]", "", header, "x86_64")
-
-    def test_linux_architecture_and_rpath(self):
-        with self.assertRaisesRegex(ValueError, "architecture"):
-            check_linux("", "", "Machine: AArch64", "x86_64")
-        with self.assertRaisesRegex(ValueError, "search path"):
-            check_linux("(RUNPATH) [/opt/build]", "", "Machine: AArch64", "aarch64")
-
-    def test_macos_deployment_and_homebrew_linkage(self):
-        libs = "binary:\n\t/usr/lib/libc++.1.dylib (compatibility version 1.0.0)"
-        check_macos(libs, "cmd LC_BUILD_VERSION\n minos 10.15", "x86_64", "10.15", "x86_64")
-        check_macos(
-            libs,
-            "cmd LC_VERSION_MIN_MACOSX\n cmdsize 16\n version 10.15",
-            "x86_64",
-            "10.15",
-            "x86_64",
-        )
-        with self.assertRaisesRegex(ValueError, "deployment target"):
-            check_macos(libs, "minos 13.0", "arm64", "11.0", "arm64")
-        with self.assertRaisesRegex(ValueError, "Non-system"):
-            check_macos(
-                "binary:\n\t/opt/homebrew/lib/libfoo.dylib (x)",
-                "minos 11.0",
-                "arm64",
-                "11.0",
-                "arm64",
-            )
+from tools.elf import audit_elf
+from tools.macho import audit_macho
 
 
-if __name__ == "__main__":
-    unittest.main()
+@pytest.fixture
+def elf(tmp_path, monkeypatch):
+    path = tmp_path / "binary"
+    path.touch()
+    segment = MagicMock(spec=DynamicSegment)
+    segment.iter_tags.return_value = []
+    versions = MagicMock(spec=GNUVerNeedSection)
+    versions.iter_versions.return_value = [(None, [Record(name="GLIBC_2.17")])]
+    reader = MagicMock(elfclass=64, little_endian=True)
+    reader.__getitem__.return_value = "EM_X86_64"
+    reader.iter_segments.return_value = [segment]
+    reader.get_section_by_name.return_value = versions
+    monkeypatch.setattr("tools.elf.ELFFile", lambda _: reader)
+    return Record(path=path, reader=reader, segment=segment, versions=versions)
+
+
+def test_elf_glibc_boundary_and_compiler_runtime(elf):
+    audit_elf(elf.path, "x86_64")
+    for version in ("GLIBC_2.18", "GLIBCXX_3.4.20"):
+        elf.versions.iter_versions.return_value = [(None, [Record(name=version)])]
+        with pytest.raises(ValueError, match="glibc|compiler runtime"):
+            audit_elf(elf.path, "x86_64")
+
+
+def test_elf_library_policy(elf):
+    needed = Record(entry=Record(d_tag="DT_NEEDED"), needed="libc.so.6")
+    elf.segment.iter_tags.return_value = [needed]
+    audit_elf(elf.path, "x86_64")
+    needed.needed = "libatomic.so.1"
+    with pytest.raises(ValueError, match="shared libraries"):
+        audit_elf(elf.path, "x86_64")
+
+
+@pytest.mark.parametrize("tag", ["DT_RPATH", "DT_RUNPATH"])
+def test_elf_rejects_search_paths(elf, tag):
+    elf.segment.iter_tags.return_value = [Record(entry=Record(d_tag=tag))]
+    with pytest.raises(ValueError, match="search path"):
+        audit_elf(elf.path, "x86_64")
+
+
+def test_elf_missing_version_sections_cannot_bypass_audit(elf):
+    elf.segment.iter_tags.return_value = [Record(entry=Record(d_tag="DT_VERNEED"))]
+    elf.reader.get_section_by_name.return_value = None
+    with pytest.raises(ValueError, match="symbol-version"):
+        audit_elf(elf.path, "x86_64")
+
+
+def test_elf_rejects_wrong_architecture(elf):
+    with pytest.raises(ValueError, match="architecture"):
+        audit_elf(elf.path, "aarch64")
+
+
+@pytest.fixture
+def macho(tmp_path, monkeypatch):
+    header = Record(header=Record(cputype=0x01000007, cpusubtype=3), commands=[])
+    monkeypatch.setattr("tools.macho.MachO", lambda _: Record(headers=[header]))
+    return tmp_path / "binary", header
+
+
+@pytest.mark.parametrize("legacy", [True, False])
+def test_macho_deployment_boundary(macho, legacy):
+    path, header = macho
+    for version in (0x0C0300, 0x0C0400):
+        header.commands = [
+            (Record(cmd=mach_o.LC_VERSION_MIN_MACOSX), Record(version=version), b"")
+            if legacy
+            else (Record(cmd=mach_o.LC_BUILD_VERSION), Record(minos=version, platform=1), b"")
+        ]
+        if version == 0x0C0300:
+            audit_macho(path, "12.3", "x86_64")
+        else:
+            with pytest.raises(ValueError, match="deployment target"):
+                audit_macho(path, "12.3", "x86_64")
+
+
+def test_macho_rejects_non_system_library(macho):
+    path, header = macho
+    load = mach_o.load_command(cmd=mach_o.LC_LOAD_DYLIB)
+    command = mach_o.dylib_command(name=sizeof(load) + sizeof(mach_o.dylib_command))
+    header.commands = [(load, command, b"/opt/homebrew/lib/libfoo.dylib\0")]
+    with pytest.raises(ValueError, match="Non-system"):
+        audit_macho(path, "12.3", "x86_64")
+
+
+def test_macho_rejects_search_paths_and_missing_deployment_target(macho):
+    path, header = macho
+    with pytest.raises(ValueError, match="deployment target"):
+        audit_macho(path, "12.3", "x86_64")
+    header.commands = [(Record(cmd=mach_o.LC_RPATH), None, b"")]
+    with pytest.raises(ValueError, match="search path"):
+        audit_macho(path, "12.3", "x86_64")
+
+
+def test_macho_rejects_specialized_architecture(macho):
+    path, header = macho
+    header.header.cpusubtype = 8  # x86_64h requires Haswell.
+    with pytest.raises(ValueError, match="architecture subtype"):
+        audit_macho(path, "12.3", "x86_64")

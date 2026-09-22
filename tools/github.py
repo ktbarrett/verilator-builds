@@ -1,72 +1,80 @@
-"""Small GitHub API adapter using the runner's authenticated gh CLI."""
+"""GitHub operations backed by PyGithub; publication policy lives in tools.publish."""
 
-import base64
-import json
-import subprocess
-import sys
-from urllib.parse import quote
+import os
+
+from github import Auth, Github
+from github.GitRelease import GitRelease
+from github.GitReleaseAsset import GitReleaseAsset
 
 
 class GitHub:
     def __init__(self, repository):
         self.repository = repository
-
-    def run(self, arguments, **kwargs):
-        try:
-            return subprocess.run(["gh", *arguments], check=True, **kwargs)
-        except subprocess.CalledProcessError as error:
-            if error.stderr:
-                print(error.stderr.rstrip(), file=sys.stderr, flush=True)
-            raise
-
-    def api(self, endpoint, method="GET", data=None):
-        command = ["api", "--method", method, endpoint]
-        if data is not None:
-            command += ["--input", "-"]
-        result = self.run(
-            command,
-            input=json.dumps(data) if data is not None else None,
-            text=True,
-            capture_output=True,
+        token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+        # Do not replay a possibly successful upload or release mutation. The
+        # scheduler reconciles remote state and retries incomplete publications.
+        self.client = Github(
+            auth=Auth.Token(token) if token else None, retry=0, timeout=60, lazy=True
         )
-        return json.loads(result.stdout) if result.stdout.strip() else None
-
-    def pages(self, endpoint):
-        page = 1
-        while True:
-            separator = "&" if "?" in endpoint else "?"
-            items = self.api(f"{endpoint}{separator}per_page=100&page={page}")
-            yield from items
-            if len(items) < 100:
-                return
-            page += 1
+        self.repo = self.client.get_repo(repository)
 
     def releases(self):
-        return list(self.pages(f"repos/{self.repository}/releases"))
+        fields = ("id", "url", "tag_name", "name", "body", "draft", "prerelease", "upload_url")
+        return [
+            {field: getattr(release, field) for field in fields}
+            for release in self.repo.get_releases()
+        ]
+
+    def tags(self, repository):
+        return [tag.raw_data for tag in self.client.get_repo(repository).get_tags()]
+
+    def _release(self, release):
+        return self.client.create_from_raw_data(GitRelease, release)
 
     def assets(self, release):
-        return list(self.pages(f"repos/{self.repository}/releases/{release['id']}/assets"))
+        fields = ("id", "url", "name", "size", "digest")
+        return [
+            {field: getattr(asset, field) for field in fields}
+            for asset in self._release(release).get_assets()
+        ]
 
     def commit(self, repository, ref):
-        return self.api(f"repos/{repository}/commits/{quote(ref, safe='')}")["sha"]
+        return self.client.get_repo(repository).get_commit(ref).complete().sha
 
-    def file(self, repository, path, ref):
-        result = self.api(
-            f"repos/{repository}/contents/{quote(path, safe='/')}?ref={quote(ref, safe='')}"
-        )
-        if result.get("encoding") != "base64":
-            raise ValueError(f"Unsupported content encoding for {path}")
-        return base64.b64decode(result["content"]).decode()
+    def create_release(self, tag, recipe, nightly):
+        return self.repo.create_git_release(
+            tag,
+            tag,
+            "",
+            draft=True,
+            prerelease=nightly,
+            target_commitish=recipe,
+            make_latest="false",
+        ).raw_data
 
-    def upload(self, tag, paths):
-        self.run(
-            [
-                "release",
-                "upload",
-                tag,
-                "--repo",
-                self.repository,
-                "--clobber",
-                *map(str, paths),
-            ],
-        )
+    def update_release(self, release, **changes):
+        fields = {
+            "name": release.get("name") or release["tag_name"],
+            "body": release.get("body") or "",
+            "draft": release["draft"],
+            "prerelease": release["prerelease"],
+            **changes,
+        }
+        fields["message"] = fields.pop("body")
+        return self._release(release).update_release(**fields).raw_data
+
+    def delete_asset(self, asset):
+        self.client.create_from_raw_data(GitReleaseAsset, asset).delete_asset()
+
+    def upload(self, release, paths):
+        remote = self._release(release)
+        existing = {asset.name: asset for asset in remote.get_assets()}
+        for path in paths:
+            # Match gh release upload --clobber. Nightly filenames include their
+            # generation, so these replacements cannot delete the previous set.
+            if path.name in existing:
+                existing[path.name].delete_asset()
+            remote.upload_asset(str(path))
+
+    def update_tag(self, tag, sha):
+        self.repo.get_git_ref(f"tags/{tag}").complete().edit(sha, force=True)

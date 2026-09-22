@@ -10,6 +10,14 @@ dependencies = [
     "pyelftools>=0.32,<1",
     "macholib>=1.16,<2",
 ]
+authors = [
+    {name = "Kaleb Barrett", email = "dev.ktbarrett@gmail.com"},
+]
+maintainers = [
+    {name = "Kaleb Barrett", email = "dev.ktbarrett@gmail.com"},
+]
+license = "BSD-3-Clause"
+license-files = ["LICENSE"]
 
 [dependency-groups]
 dev = [

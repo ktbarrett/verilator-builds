@@ -89,11 +89,11 @@ def cleanup_nightly(api):
     assets = api.assets(nightly)
     if state and complete(nightly, assets, state["sha"], state["recipe"]):
         for asset in obsolete_assets(assets, state["label"], state.get("source_version")):
-            api.api(f"repos/{api.repository}/releases/assets/{asset['id']}", "DELETE")
+            api.delete_asset(asset)
     elif nightly["draft"] and not state:
         # An interrupted first publication has no successful set to preserve.
         for asset in assets:
-            api.api(f"repos/{api.repository}/releases/assets/{asset['id']}", "DELETE")
+            api.delete_asset(asset)
 
 
 def publish(api, directory, mode, label, sha, recipe):
@@ -118,21 +118,11 @@ def publish(api, directory, mode, label, sha, recipe):
             print(f"{tag} is already complete; preserving the published release")
             return
         # An incomplete stable release must not appear as a complete download set.
-        api.api(f"repos/{api.repository}/releases/{release['id']}", "PATCH", {"draft": True})
+        release = api.update_release(release, draft=True)
     if not release:
-        release = api.api(
-            f"repos/{api.repository}/releases",
-            "POST",
-            {
-                "tag_name": tag,
-                "target_commitish": recipe,
-                "name": tag,
-                "draft": True,
-                "prerelease": mode == "nightly",
-            },
-        )
+        release = api.create_release(tag, recipe, nightly=mode == "nightly")
     # Nightly names are generation-specific, so a failed upload preserves the old set.
-    api.upload(tag, paths)
+    api.upload(release, paths)
     uploaded = {a["name"]: a for a in api.assets(release)}
     for path in paths:
         asset = uploaded.get(path.name)
@@ -173,22 +163,17 @@ def publish(api, directory, mode, label, sha, recipe):
         if mode == "stable"
         else True
     )
-    api.api(
-        f"repos/{api.repository}/releases/{release['id']}",
-        "PATCH",
-        {
-            "draft": False,
-            "prerelease": mode == "nightly",
-            "body": body,
-            "name": f"Verilator {label}" if mode == "stable" else f"Verilator nightly ({sha[:12]})",
-            "make_latest": "false" if newer else "true",
-        },
+    api.update_release(
+        release,
+        draft=False,
+        prerelease=mode == "nightly",
+        body=body,
+        name=f"Verilator {label}" if mode == "stable" else f"Verilator nightly ({sha[:12]})",
+        make_latest="false" if newer else "true",
     )
     if mode == "nightly":
-        # The mirror's tags refer to packaging commits, not absent upstream objects.
-        api.api(
-            f"repos/{api.repository}/git/refs/tags/nightly", "PATCH", {"sha": recipe, "force": True}
-        )
+        # Mirror tags identify packaging commits, not absent upstream objects.
+        api.update_tag("nightly", recipe)
         cleanup_nightly(api)
 
 

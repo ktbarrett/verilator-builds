@@ -37,12 +37,14 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: '3.12'
+      - run: python -m pip install uv==0.12.17
+      - run: uv sync --locked --no-dev --python 3.12
       - id: discover
         env:
           GH_TOKEN: ${{ github.token }}
           BUILD_MODE: ${{ inputs.mode || 'auto' }}
           UPSTREAM_REF: ${{ inputs.ref || 'v5.048' }}
-        run: python -m tools.discover --mode "$BUILD_MODE" --ref "$UPSTREAM_REF"
+        run: uv run --no-sync python -m tools.discover --mode "$BUILD_MODE" --ref "$UPSTREAM_REF"
 
   cleanup:
     runs-on: ubuntu-24.04
@@ -55,10 +57,12 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: '3.12'
+      - run: python -m pip install uv==0.12.17
+      - run: uv sync --locked --no-dev --python 3.12
       - if: github.event_name == 'schedule' || inputs.mode == 'auto' || inputs.mode == 'nightly'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python -m tools.publish --mode cleanup
+        run: uv run --no-sync python -m tools.publish --mode cleanup
 
   build:
     needs: [discover, cleanup]

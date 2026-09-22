@@ -1,11 +1,23 @@
 """Read the publication state shared by release discovery and publication."""
 
-import json
 import re
+from typing import Annotated
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from .config import expected_assets
 
 MARKER = "verilator-builds-state:"
+CommitSHA = Annotated[str, Field(pattern=r"^[0-9a-f]{40}$")]
+
+
+class _ReleaseState(BaseModel):
+    model_config = ConfigDict(strict=True, extra="allow")
+
+    sha: CommitSHA
+    recipe: CommitSHA
+    label: str
+    source_version: Annotated[str, Field(pattern=r"^v[0-9]+\.[0-9]{3}$")] | None = None
 
 
 def release_state(release):
@@ -13,17 +25,10 @@ def release_state(release):
     if not match:
         return None
     try:
-        state = json.loads(match[1])
-        if not isinstance(state, dict) or not all(
-            isinstance(state.get(key), str) for key in ("sha", "recipe", "label")
-        ):
-            return None
-        source_version = state.get("source_version")
-        if source_version is not None and not isinstance(source_version, str):
-            return None
-        expected_assets(state["label"], source_version)
+        state = _ReleaseState.model_validate_json(match[1]).model_dump(exclude_unset=True)
+        expected_assets(state["label"], state.get("source_version"))
         return state
-    except (json.JSONDecodeError, ValueError):
+    except ValueError:
         return None
 
 

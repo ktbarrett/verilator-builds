@@ -16,7 +16,6 @@ from tools.config import (
     supported_platforms,
 )
 from tools.discover import discover
-from tools.github import GitHub
 from tools.package import create_archive, sha256
 from tools.publish import assemble, cleanup_nightly, publish
 from tools.releases import MARKER, complete, release_state
@@ -67,14 +66,14 @@ class FakeGitHub:
     repository = "example/verilator-builds"
 
     def __init__(self):
-        self.tags = [{"name": "v1.000", "commit": {"sha": SHA}}]
+        self.tag_list = [{"name": "v1.000", "commit": {"sha": SHA}}]
         self.release_list = []
         self.asset_list = []
         self.events = []
         self.fail_upload = False
 
-    def pages(self, endpoint):
-        return iter(self.tags)
+    def tags(self, repository):
+        return self.tag_list
 
     def releases(self):
         return copy.deepcopy(self.release_list)
@@ -85,19 +84,26 @@ class FakeGitHub:
     def commit(self, repository, ref):
         return SHA
 
-    def api(self, endpoint, method="GET", data=None):
-        self.events.append((method, endpoint, data))
-        if method == "DELETE":
-            asset_id = int(endpoint.rsplit("/", 1)[1])
-            self.asset_list = [a for a in self.asset_list if a["id"] != asset_id]
-        elif method == "POST":
-            self.release_list = [{"id": 1, "body": "", **data}]
-            return self.release_list[0]
-        elif "/releases/" in endpoint and method == "PATCH":
-            self.release_list[0].update(data)
+    def delete_asset(self, asset):
+        self.events.append(("DELETE", asset["id"], None))
+        self.asset_list = [a for a in self.asset_list if a["id"] != asset["id"]]
 
-    def upload(self, tag, paths):
-        self.events.append(("UPLOAD", tag, None))
+    def create_release(self, tag, recipe, nightly):
+        data = {"tag_name": tag, "target_commitish": recipe, "draft": True, "prerelease": nightly}
+        self.events.append(("POST", tag, data))
+        self.release_list = [{"id": 1, "body": "", **data}]
+        return copy.deepcopy(self.release_list[0])
+
+    def update_release(self, release, **changes):
+        self.events.append(("PATCH", release["id"], changes))
+        self.release_list[0].update(changes)
+        return copy.deepcopy(self.release_list[0])
+
+    def update_tag(self, tag, sha):
+        self.events.append(("PATCH", tag, {"sha": sha, "force": True}))
+
+    def upload(self, release, paths):
+        self.events.append(("UPLOAD", release["tag_name"], None))
         for path in paths:
             self.asset_list = [a for a in self.asset_list if a["name"] != path.name]
             self.asset_list.append(
@@ -146,7 +152,7 @@ class DiscoveryTests(unittest.TestCase):
 
     def test_tag_filter_sort_and_backlog_limit(self):
         api = FakeGitHub()
-        api.tags = [
+        api.tag_list = [
             {"name": tag, "commit": {"sha": SHA}}
             for tag in ["v1.006", "v1.002", "v0.998", "v1.000", "v1.004", "v1.008-rc1"]
         ]
@@ -171,12 +177,6 @@ class DiscoveryTests(unittest.TestCase):
         incomplete = assets("v1.000")
         incomplete[0]["size"] = 0
         self.assertFalse(complete(release("v1.000"), incomplete, SHA))
-
-    def test_api_pagination(self):
-        api = GitHub("example/repo")
-        with patch.object(api, "api", side_effect=[list(range(100)), [100]]) as call:
-            self.assertEqual(list(api.pages("repos/example/repo/tags")), list(range(101)))
-            self.assertEqual(call.call_args.args[0], "repos/example/repo/tags?per_page=100&page=2")
 
 
 class PublicationTests(unittest.TestCase):
@@ -244,6 +244,15 @@ class PublicationTests(unittest.TestCase):
         manifest["source_version"] = "v1.002"
         path.write_text(json.dumps(manifest))
         with self.assertRaisesRegex(ValueError, "Mismatched source_version"):
+            assemble(self.directory, "v1.000", SHA, RECIPE)
+
+    def test_unknown_sidecar_metadata_cannot_hide_embedded_mismatch(self):
+        self.packages("v1.000")
+        path = self.directory / "linux-x86_64.manifest.json"
+        manifest = json.loads(path.read_text())
+        manifest["future_build_details"] = "not present in the archive"
+        path.write_text(json.dumps(manifest))
+        with self.assertRaisesRegex(ValueError, "Embedded manifest mismatch"):
             assemble(self.directory, "v1.000", SHA, RECIPE)
 
     def test_nightly_includes_every_platform_regardless_of_source_version(self):

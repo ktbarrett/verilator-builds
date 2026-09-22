@@ -25,7 +25,7 @@ def discover(api, recipe, mode, ref, run):
         return [{"sha": sha, "label": label, "mode": mode, "ref": ref}]
 
     releases = {r["tag_name"]: r for r in api.releases()}
-    tags = list(api.pages(f"repos/{upstream}/tags"))
+    tags = api.tags(upstream)
     candidates = sorted(
         (
             t

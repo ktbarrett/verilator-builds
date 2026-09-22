@@ -79,12 +79,12 @@ Use [uv](https://docs.astral.sh/uv/) to create the Python 3.12+ development
 environment and install the project dependencies and development tools:
 
 ```sh
-uv sync --python 3.12
+uv sync --locked --python 3.12
 uv run pre-commit install
 ```
 
-`uv sync` creates `.venv/` and resolves dependencies into `uv.lock`. Commit the
-lockfile after the initial environment setup. This repository is a collection of
+`uv sync --locked` creates `.venv/` from the committed `uv.lock` and fails if
+the project dependencies and lockfile disagree. This repository is a collection of
 tools run from its checkout, so uv manages dependencies without building or
 installing the repository as a Python package. Environment activation is optional;
 use `uv run` to execute commands in it.
@@ -93,17 +93,18 @@ The pre-commit hooks run Ruff lint fixes followed by formatting. Review and stag
 any changes they make before committing again. Both hooks and the development
 dependency use Ruff 0.16.6; update their versions together.
 
-The current utilities still use the standard library and `gh`. The dependencies
-for the planned refactor below are declared now so the environment is ready for
-that work. Responsibilities are separated:
+The utilities use PyGithub for GitHub operations and Pydantic when reading
+release metadata from GitHub. Responsibilities are separated:
 
 - `tools/discover.py`: resolve requested source revisions and find missing releases.
 - `tools/upstream.py`: read the source version from upstream metadata.
-- `tools/releases.py`: read published generation metadata shared by discovery and publication.
+- `tools/github.py`: authenticate GitHub API calls, paginate results, and manage release assets.
+- `tools/releases.py`: validate published generation metadata shared by discovery and publication.
 - `tools/matrix.py`: select supported build targets and resolve the CI test release.
 - `tools/build.py`, `tools/linux.py`: build a private source export on the target platform.
 - `tools/package.py`: relocate installed metadata, create archives and provenance.
-- `tools/validate.py`: inspect executable dependencies and run the installed smoke test.
+- `tools/elf.py`, `tools/macho.py`: inspect binary compatibility using pyelftools and macholib.
+- `tools/validate.py`: validate archive provenance and run the installed smoke test.
 - `tools/publish.py`: verify complete sets, publish, and clean up nightly assets.
 - `config.json`: discovery start, per-platform first releases, compatibility targets, runners, and images.
 
@@ -120,7 +121,8 @@ uv run python -m tools.build --source ../verilator \
 ```
 
 This requires autoconf, flex, bison, help2man, make, Perl, Python, the target C++
-compiler, and platform binary inspection tools. Linux ABI validation requires a
+compiler, and the platform
+`strip` utility. Linux ABI validation requires a
 manylinux-compatible environment. For a functional development build on a newer
 Linux host, `--skip-abi-audit` is available; it is forbidden in CI and publication
 rejects such packages. Outputs go to ignored `dist/`; temporary builds use ignored
@@ -147,7 +149,7 @@ uv run pre-commit run --all-files
 ```
 
 The Python CI job uses the same environment setup, hooks, and test command.
-Pytest runs the existing unittest tests without converting them. To check Ruff
+Pytest runs both fixture-based tests and the existing unittest tests. To check Ruff
 without editing files, run `uv run ruff check .` and `uv run ruff format --check .`.
 
 Pull requests and pushes resolve the current upstream `master` to an immutable
@@ -158,46 +160,39 @@ advance; these builds are not claimed to be bit-for-bit reproducible. Pin image
 digests in `config.json` when a fixed build environment is desired. New upstream
 submodules deliberately stop source export until the source packaging is updated.
 
-## Planned Python dependency refactor
+## Python dependencies and compatibility checks
 
-Implement this after the development environment is set up. The dependencies
-below are declared in `pyproject.toml`; the build and publication implementation
-has not yet been changed to use them.
+PyGithub handles API requests, pagination, asset uploads,
+release updates, and tag updates. The adapter reads `GH_TOKEN`, falling back to
+`GITHUB_TOKEN`; public reads can also run without credentials. Python utilities
+no longer require `gh`. Automatic HTTP retries are disabled so an ambiguous write
+failure cannot replay a mutation. Scheduled runs reconcile remote state and retry
+incomplete publications. Uploads replace assets with matching names; nightly
+filenames include their generation so this preserves the previous successful set.
+Publication still checks uploaded sizes and available digests before switching
+the release marker and removing obsolete assets.
 
-| Dependency | Owning code | Proposed change |
-| --- | --- | --- |
-| PyGithub | `tools/github.py`, consumed by discovery and publication | Replace `gh` subprocess calls, manual pagination, content decoding, release uploads, and tag updates with the GitHub client. Keep authentication and error handling in the adapter. |
-| Pydantic 2 | `tools/config.py`, `tools/releases.py`, and a focused manifest module shared by packaging, publication, and validation | Validate configuration, release state, and manifests at their input boundaries. Share explicit models instead of repeating dictionary shape checks. |
-| pyelftools | ELF audit code currently in `tools/validate.py` | Read ELF machine type, dynamic dependencies, RPATH/RUNPATH, and GNU symbol-version requirements directly instead of parsing `readelf` and `objdump` output. |
-| macholib | Mach-O audit code currently in `tools/validate.py` | Read architecture, dylib dependencies, deployment targets, and RPATH load commands directly instead of parsing `otool` and `lipo` output. |
-| pytest and responses (development) | `tests/` | Gradually replace repeated unittest setup with fixtures and parameterization; test the GitHub adapter with mocked HTTP responses, including pagination, failures, and interrupted publication. |
+Pydantic validates release markers read from GitHub without coercing provenance
+values. Legacy markers may omit `source_version`. The checked-in configuration
+and manifests generated by our own jobs use ordinary dictionaries and JSON; they
+do not need internal data-contract models. The manifest schema stays at version 1.
+Checksum matching, source/recipe identity, ABI audit status, embedded/sidecar
+manifest equality, platform floors, and publication ordering remain explicit
+checks in their owning modules.
 
-Keep the ELF and Mach-O readers in focused modules if the implementations outgrow
-`tools/validate.py`; that module should continue to own archive and smoke-test
-orchestration. Install both readers on every development platform so their
-fixture-based tests can run together. Compare the new readers against the native
-tools on real packages for all four targets before replacing the current audits.
+The ELF reader checks architecture, dynamic libraries, RPATH/RUNPATH, and GNU
+symbol-version requirements. Packages with missing version sections are rejected
+when their dynamic table advertises those requirements. The Mach-O reader checks
+architecture and subtype, library load commands, RPATH, and both modern and legacy
+macOS deployment-target commands. These readers do not execute the inspected
+binaries or require `readelf`, `objdump`, `otool`, or `lipo`. Unit tests exercise
+our compatibility rules using parsed metadata. The hosted build jobs exercise the real readers while
+auditing and smoke-testing every produced package on its target platform.
 
-Preserve the existing manifest schema and optional legacy release-state fields.
-Pydantic models should reject invalid types without silently coercing provenance
-fields. Source/recipe matching, checksums, platform support floors, and publication
-ordering remain explicit domain rules. In particular, failed nightly uploads must
-preserve the previous generation, and complete stable releases must stay intact.
-PyGithub upload handling must preserve the existing replacement semantics and
-post-upload size/digest verification; mutating operations need deliberate retry
-behavior. Continue taking credentials from the job environment.
-
-Keep `argparse`, `pathlib`, `tarfile`, `hashlib`, and `subprocess` for their current
-roles. Git source export and the compiler/build tools are already short, direct
-CLI operations; a Git or process-wrapper dependency would add little here.
-Verilator's `vN.NNN` tags and development labels need their existing domain rules,
-so a general Python package-version parser would not replace them. PyGithub
-provides the required HTTP client; no separate runtime HTTP dependency is needed.
-
-Refactor the GitHub adapter and metadata validation first, then the binary readers,
-using the existing release and packaging tests as behavior checks. As each runtime
-dependency is adopted, update every invoking workflow and the manylinux container
-setup to install the locked dependencies. Use a separate environment inside the
-container rather than reusing the host `.venv/`, and verify dependency installation
-on both manylinux architectures and both macOS targets. Once `uv.lock` is committed,
-make CI use `uv sync --locked` so dependency drift fails visibly.
+Every workflow installs the locked runtime dependencies with uv before invoking
+Python modules. Linux containers bootstrap their own environment at
+`/tmp/verilator-builds-venv` using the manylinux Python 3.12 interpreter; they do
+not reuse the host's `.venv/`. CI bootstraps uv 0.12.17. Dependency updates must
+retain wheels compatible with both manylinux2014 architectures and both macOS
+runners. Update `uv.lock` deliberately with `uv lock --upgrade`, then run the
+unit tests and all four package builds.
