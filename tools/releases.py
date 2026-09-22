@@ -1,4 +1,4 @@
-"""Read the publication state shared by release discovery and installation."""
+"""Read the publication state shared by release discovery and publication."""
 
 import json
 import re

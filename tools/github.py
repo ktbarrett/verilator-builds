@@ -2,32 +2,21 @@
 
 import base64
 import json
-import os
 import subprocess
 import sys
 from urllib.parse import quote
 
 
-class GitHubNotFound(RuntimeError):
-    """The requested GitHub resource returned HTTP 404."""
-
-
 class GitHub:
-    def __init__(self, repository, token=None):
+    def __init__(self, repository):
         self.repository = repository
-        # Keep the action's token local to gh subprocesses, out of source builds.
-        self.env = (
-            None if token is None else {**os.environ, "GH_TOKEN": token, "GH_HOST": "github.com"}
-        )
 
     def run(self, arguments, **kwargs):
         try:
-            return subprocess.run(["gh", *arguments], env=self.env, check=True, **kwargs)
+            return subprocess.run(["gh", *arguments], check=True, **kwargs)
         except subprocess.CalledProcessError as error:
             if error.stderr:
                 print(error.stderr.rstrip(), file=sys.stderr, flush=True)
-            if "(HTTP 404)" in (error.stderr or ""):
-                raise GitHubNotFound(error.stderr.strip()) from error
             raise
 
     def api(self, endpoint, method="GET", data=None):
@@ -41,51 +30,6 @@ class GitHub:
             capture_output=True,
         )
         return json.loads(result.stdout) if result.stdout.strip() else None
-
-    def release(self, tag):
-        try:
-            return self.api(f"repos/{self.repository}/releases/tags/{quote(tag, safe='')}")
-        except GitHubNotFound:
-            return None
-
-    def download_assets(self, tag, names, directory):
-        """Let gh find and download the named release assets."""
-        command = ["release", "download", tag, "--repo", self.repository, "--dir", str(directory)]
-        for name in names:
-            command.extend(["--pattern", name])
-        try:
-            self.run(command, stderr=subprocess.PIPE, text=True)
-        except subprocess.CalledProcessError as error:
-            # The rolling nightly can remove assets between lookup and download.
-            # Recheck availability instead of parsing gh's human-readable errors.
-            release = self.release(tag)
-            available = (
-                {asset["name"] for asset in self.assets(release) if asset.get("size", 0) > 0}
-                if release is not None
-                else set()
-            )
-            missing = set(names) - available
-            if missing:
-                raise GitHubNotFound(
-                    f"Release assets are unavailable: {', '.join(sorted(missing))}"
-                ) from error
-            raise
-        # Multiple patterns can match only a subset of the requested assets.
-        missing = {name for name in names if not (directory / name).is_file()}
-        if missing:
-            raise GitHubNotFound(
-                f"Release assets were not downloaded: {', '.join(sorted(missing))}"
-            )
-
-    def download_source(self, repository, ref, destination):
-        """Fetch an upstream archive using gh's default API headers and redirects."""
-        with destination.open("wb") as stream:
-            self.run(
-                ["api", "--method", "GET", f"repos/{repository}/tarball/{quote(ref, safe='')}"],
-                stdout=stream,
-                stderr=subprocess.PIPE,
-                text=True,
-            )
 
     def pages(self, endpoint):
         page = 1

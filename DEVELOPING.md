@@ -80,9 +80,7 @@ GitHub API utilities also use `gh`. Responsibilities are separated:
 
 - `tools/discover.py`: resolve requested source revisions and find missing releases.
 - `tools/upstream.py`: read the source version from upstream metadata.
-- `action.yml`, `tools/install.py`: install published packages or fall back to a native build.
-- `tools/native.py`: prepare dependencies and build for the action consumer's runner.
-- `tools/releases.py`: read published generation metadata shared by discovery and installation.
+- `tools/releases.py`: read published generation metadata shared by discovery and publication.
 - `tools/matrix.py`: select supported build targets and resolve the CI test release.
 - `tools/build.py`, `tools/linux.py`: build a private source export on the target platform.
 - `tools/package.py`: relocate installed metadata, create archives and provenance.
@@ -137,25 +135,3 @@ manifests, but the configured image tags and installed build dependencies can
 advance; these builds are not claimed to be bit-for-bit reproducible. Pin image
 digests in `config.json` when a fixed build environment is desired. New upstream
 submodules deliberately stop source export until the source packaging is updated.
-
-The setup action uses the shared `gh` adapter: `gh release download` fetches named
-release assets, and `gh api` fetches upstream source archives with its default
-headers and redirect handling. The installer does not construct download URLs.
-It looks up releases in the action's repository. The nightly release's
-state marker selects its successful generation, so pending uploads are ignored.
-A missing release, platform archive, or deleted asset triggers a source build;
-authentication, rate-limit, and checksum failures fail the installation.
-
-Native fallback builds deliberately use a separate recipe from portable release
-packaging. They install into a fixed private prefix on the current runner, have
-no publication version floors or baseline ABI checks, and need no Docker. The
-upstream revision is resolved before downloading source. Compilation receives no
-action API token. Source and download directories are removed after installation.
-Installations remain available for the job in `RUNNER_TEMP`; no cross-job cache
-is used, so a `nightly` request always checks the current published generation.
-
-`Test setup action` exercises nightly installation on all four hosted targets,
-an older Linux release that requires fallback, and a forced macOS source build.
-It runs the installed lint, C++ compilation, simulation, tracing, and coverage
-checks from outside the action checkout. Unit tests cover release selection,
-archive verification, fallback, and GitHub environment exports without network access.
