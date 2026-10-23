@@ -96,6 +96,20 @@ def cleanup_nightly(api):
             api.delete_asset(asset)
 
 
+def withdraw(api, label, sha, recipe):
+    """Hide a stable release whose rebuild failed until a later run succeeds."""
+    release = next((r for r in api.releases() if r["tag_name"] == label), None)
+    if not release or release["draft"]:
+        return
+    if not release_state(release):
+        raise ValueError("Refusing to withdraw a release not managed by this repository")
+    if complete(release, api.assets(release), sha, recipe):
+        print(f"{label} is already complete for this recipe; preserving the published release")
+        return
+    # Consumers fall back to a source build while the release is a draft.
+    api.update_release(release, draft=True)
+
+
 def publish(api, directory, mode, label, sha, recipe):
     if not re.fullmatch(r"[0-9a-f]{40}", sha) or not re.fullmatch(r"[0-9a-f]{40}", recipe):
         raise ValueError("Publication requires full source and packaging commit SHAs")
@@ -114,10 +128,11 @@ def publish(api, directory, mode, label, sha, recipe):
             raise ValueError("Refusing to replace a release not managed by this repository")
         if state and state["sha"] != sha:
             raise ValueError("Upstream tag changed since publication; investigate manually")
-        if complete(release, api.assets(release), sha):
-            print(f"{tag} is already complete; preserving the published release")
+        if complete(release, api.assets(release), sha, recipe):
+            print(f"{tag} is already complete for this recipe; preserving the published release")
             return
-        # An incomplete stable release must not appear as a complete download set.
+        # A stable release being replaced must not appear as a complete download set.
+        # Consumers fall back to a source build while it is a draft.
         release = api.update_release(release, draft=True)
     if not release:
         release = api.create_release(tag, recipe, nightly=mode == "nightly")
@@ -171,16 +186,18 @@ def publish(api, directory, mode, label, sha, recipe):
         name=f"Verilator {label}" if mode == "stable" else f"Verilator nightly ({sha[:12]})",
         make_latest="false" if newer else "true",
     )
+    # Mirror tags identify the packaging commit that built the current assets.
+    api.update_tag(tag, recipe)
     if mode == "nightly":
-        # Mirror tags identify packaging commits, not absent upstream objects.
-        api.update_tag("nightly", recipe)
         cleanup_nightly(api)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--directory", type=Path, default=Path("dist"))
-    parser.add_argument("--mode", choices=["stable", "nightly", "cleanup"], required=True)
+    parser.add_argument(
+        "--mode", choices=["stable", "nightly", "cleanup", "withdraw"], required=True
+    )
     parser.add_argument("--label")
     parser.add_argument("--sha")
     parser.add_argument("--recipe")
@@ -188,9 +205,12 @@ def main():
     api = GitHub(os.environ["GITHUB_REPOSITORY"])
     if args.mode == "cleanup":
         cleanup_nightly(api)
+        return
+    if not all((args.label, args.sha, args.recipe)):
+        parser.error("Publication requires --label, --sha, and --recipe")
+    if args.mode == "withdraw":
+        withdraw(api, args.label, args.sha, args.recipe)
     else:
-        if not all((args.label, args.sha, args.recipe)):
-            parser.error("Publication requires --label, --sha, and --recipe")
         publish(api, args.directory, args.mode, args.label, args.sha, args.recipe)
 
 

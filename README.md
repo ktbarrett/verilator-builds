@@ -4,6 +4,10 @@ Portable distributions of [Verilator](https://github.com/verilator/verilator).
 Version tags match upstream version tags.
 There is also a special `nightly` release which builds every night.
 
+Every supported release is rebuilt when the packaging in this repository
+changes, so a packaging fix reaches every version. Asset checksums change when
+that happens; the `SHA256SUMS-<label>.txt` file in each release is always current.
+
 ## GitHub Action
 
 To install Verilator in GitHub Actions, use

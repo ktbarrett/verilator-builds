@@ -1,17 +1,26 @@
 
 ## Automation
 
-`Build releases` runs daily. It enumerates upstream tags, starting
-at `first_release` in `config.json`, and compares them with complete published
-releases. It builds up to three missing stable releases per run, oldest first,
-and checks upstream `master` for a nightly build. A change to this repository's
-packaging commit also triggers a new nightly. Unchanged, complete builds are
-skipped. Failed builds and incomplete uploads are retried on a later run.
+`Build releases` runs daily and on every push to the default branch. It
+enumerates upstream tags, starting at `first_release` in `config.json`, and
+compares them with complete published releases. A release is complete when it
+was built from the current upstream tag commit **and** the current packaging
+commit. It builds every incomplete stable release, oldest first, one release at
+a time, and checks upstream `master` for a nightly build. New upstream tags are
+picked up by the daily run without a packaging change. A packaging change
+rebuilds every supported release, so the current recipe must build every
+supported Verilator version. Unchanged, complete builds are skipped. Failed
+builds and incomplete uploads are retried on a later run.
 
 All platforms build the same resolved upstream commit. Stable publication first
-uploads into a draft and publishes only after every supported platform passes validation.
-Existing complete stable releases are preserved. A moved upstream tag causes an
-error rather than silently replacing its published binaries.
+uploads into a draft and publishes only after every supported platform passes
+validation. When a published stable release is rebuilt, it becomes a draft just
+before its assets are replaced and is published again once the new set is
+verified. If any platform build or the publication fails, the release is
+withdrawn to a draft until a later run succeeds. Consumers such as
+setup-verilator treat a draft as unpublished and build from source in the
+meantime. A moved upstream tag causes an error rather than silently replacing
+its published binaries.
 
 Each platform has an inclusive `first_release` in `config.json`: Linux starts
 at `v5.048`, macOS ARM64 at `v5.050`, and macOS Intel at `v5.054`. The top-level
@@ -36,8 +45,9 @@ archive, a combined manifest, and SHA-256 checksums. The source archive is an ex
 export of the upstream commit. Packaging changes to installed metadata are
 implemented in this repository. GitHub's automatically generated source archives
 refer to **this packaging repository**, not upstream Verilator; use the explicitly
-attached `verilator-<label>-source.tar.gz` instead. Mirror tags identify packaging
-commits; manifests identify the upstream source commit.
+attached `verilator-<label>-source.tar.gz` instead. Mirror tags identify the
+packaging commit that built the current assets and move when a release is
+rebuilt; manifests identify the upstream source commit.
 Manifests also record the declared source version. Publication verifies that stable
 labels and package metadata match the source archive. Discovery requires only the
 packages selected by the label: two for `v5.048`, three for `v5.050` and `v5.052`,
@@ -56,7 +66,7 @@ Use **Actions → Build releases → Run workflow**:
 | --- | --- | --- |
 | `build` (default) | Any upstream tag or commit | Test every platform; one-day Actions artifacts |
 | `stable` | `v5.048` | Publish the first mirrored release |
-| `auto` | Ignored | Catch up on releases from v5.048 and update nightly |
+| `auto` | Ignored | Rebuild every stale release from v5.048 and update nightly |
 | `nightly` | `master`, a tag, or a commit | Force replacement of the rolling prerelease |
 
 Or, with GitHub CLI:
@@ -70,8 +80,9 @@ gh workflow run releases.yml -f mode=auto
 The standard `GITHUB_TOKEN` is sufficient. Only release management jobs request
 `contents: write`; compilation and PR jobs use `contents: read`, do not persist
 checkout credentials, and receive no publication token in their environment.
-All release runs share a concurrency group. Avoid enabling GitHub immutable
-releases for the rolling nightly, which requires asset deletion and tag updates.
+All release runs share a concurrency group. Do not enable GitHub immutable
+releases: stable rebuilds and the rolling nightly both require asset deletion
+and tag updates.
 
 ## Maintain and test the recipes
 
@@ -105,7 +116,7 @@ release metadata from GitHub. Responsibilities are separated:
 - `tools/package.py`: relocate installed metadata, create archives and provenance.
 - `tools/elf.py`, `tools/macho.py`: inspect binary compatibility using pyelftools and macholib.
 - `tools/validate.py`: validate archive provenance and run the installed smoke test.
-- `tools/publish.py`: verify complete sets, publish, and clean up nightly assets.
+- `tools/publish.py`: verify complete sets, publish, withdraw failed stable rebuilds, and clean up nightly assets.
 - `config.json`: discovery start, per-platform first releases, compatibility targets, runners, and images.
 
 Packaging explicitly sets the Perl launcher's data path to `../share/verilator`
@@ -153,7 +164,8 @@ Pytest runs both fixture-based tests and the existing unittest tests. To check R
 without editing files, run `uv run ruff check .` and `uv run ruff format --check .`.
 
 Pull requests and pushes resolve the current upstream `master` to an immutable
-commit and build every platform. No development-version cutoff is required.
+commit and build every platform for it and for the oldest supported release,
+`first_release` in `config.json`. No development-version cutoff is required.
 GitHub Actions are pinned to commits. Manylinux image digests are recorded in
 manifests, but the configured image tags and installed build dependencies can
 advance; these builds are not claimed to be bit-for-bit reproducible. Pin image

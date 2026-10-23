@@ -17,7 +17,7 @@ from tools.config import (
 )
 from tools.discover import discover
 from tools.package import create_archive, sha256
-from tools.publish import assemble, cleanup_nightly, publish
+from tools.publish import assemble, cleanup_nightly, publish, withdraw
 from tools.releases import MARKER, complete, release_state
 
 SHA = "a" * 40
@@ -37,9 +37,7 @@ def setUpModule():
             clear=True,
         )
     )
-    unittest.enterModuleContext(
-        patch.dict(CONFIG, {"first_release": "v1.000", "max_releases_per_run": 3})
-    )
+    unittest.enterModuleContext(patch.dict(CONFIG, {"first_release": "v1.000"}))
 
 
 def release(label, sha=SHA, recipe=RECIPE, nightly=False, draft=False, source_version=None):
@@ -134,12 +132,13 @@ class DiscoveryTests(unittest.TestCase):
         result = discover(api, RECIPE, "auto", "", "2")
         self.assertEqual([b["label"] for b in result], ["v1.000"])
 
-    def test_recipe_changes_rebuild_only_nightly(self):
+    def test_recipe_changes_rebuild_every_release(self):
         api = FakeGitHub()
         api.release_list = [release("v1.000"), release("nightly-old", nightly=True)]
         api.asset_list = assets("v1.000") + assets("nightly-old")
         result = discover(api, "c" * 40, "auto", "", "1")
-        self.assertEqual([b["mode"] for b in result], ["nightly"])
+        self.assertEqual([b["mode"] for b in result], ["stable", "nightly"])
+        self.assertEqual(result[0]["label"], "v1.000")
 
     def test_source_version_markers_and_legacy_markers(self):
         label = "nightly-old-source"
@@ -150,15 +149,17 @@ class DiscoveryTests(unittest.TestCase):
         for bad_version in ([], 5048, "bad", "v1.002"):
             self.assertIsNone(release_state(release("v1.000", source_version=bad_version)))
 
-    def test_tag_filter_sort_and_backlog_limit(self):
+    def test_tag_filter_and_sort(self):
         api = FakeGitHub()
         api.tag_list = [
             {"name": tag, "commit": {"sha": SHA}}
             for tag in ["v1.006", "v1.002", "v0.998", "v1.000", "v1.004", "v1.008-rc1"]
         ]
         result = discover(api, RECIPE, "auto", "", "1")
-        self.assertEqual([b["label"] for b in result[:-1]], ["v1.000", "v1.002", "v1.004"])
-        self.assertEqual(len(result), CONFIG["max_releases_per_run"] + 1)
+        self.assertEqual(
+            [b["label"] for b in result[:-1]], ["v1.000", "v1.002", "v1.004", "v1.006"]
+        )
+        self.assertEqual(result[-1]["mode"], "nightly")
 
     def test_manual_commit_and_historical_tag(self):
         result = discover(FakeGitHub(), RECIPE, "build", SHA, "1")
@@ -324,6 +325,49 @@ class PublicationTests(unittest.TestCase):
         api.events.clear()
         publish(api, self.directory, "stable", "v1.000", SHA, RECIPE)
         self.assertEqual(api.events, [])
+
+    def test_stable_rebuild_replaces_assets_when_recipe_changes(self):
+        api = FakeGitHub()
+        api.release_list = [release("v1.000", recipe="c" * 40)]
+        api.asset_list = [{**a, "digest": "sha256:old"} for a in assets("v1.000")]
+        old_ids = {a["id"] for a in api.asset_list}
+        self.packages("v1.000")
+        publish(api, self.directory, "stable", "v1.000", SHA, RECIPE)
+        draft_index = next(
+            i for i, e in enumerate(api.events) if e[0] == "PATCH" and e[2] == {"draft": True}
+        )
+        upload_index = next(i for i, e in enumerate(api.events) if e[0] == "UPLOAD")
+        self.assertLess(draft_index, upload_index)
+        self.assertFalse(api.release_list[0]["draft"])
+        self.assertTrue(complete(api.release_list[0], api.asset_list, SHA, RECIPE))
+        self.assertEqual({a["name"] for a in api.asset_list}, expected_assets("v1.000"))
+        self.assertFalse(old_ids & {a["id"] for a in api.asset_list})
+        self.assertIn(("PATCH", "v1.000", {"sha": RECIPE, "force": True}), api.events)
+
+    def test_withdraw_hides_stale_release_until_rebuilt(self):
+        api = FakeGitHub()
+        api.release_list = [release("v1.000", recipe="c" * 40)]
+        api.asset_list = assets("v1.000")
+        withdraw(api, "v1.000", SHA, RECIPE)
+        self.assertTrue(api.release_list[0]["draft"])
+        self.assertEqual(len(api.asset_list), len(assets("v1.000")))
+        pending = discover(api, RECIPE, "auto", "", "1")
+        self.assertEqual([b["label"] for b in pending[:-1]], ["v1.000"])
+        api.events.clear()
+        withdraw(api, "v1.000", SHA, RECIPE)
+        self.assertEqual(api.events, [])
+
+    def test_withdraw_preserves_current_or_unmanaged_releases(self):
+        api = FakeGitHub()
+        api.release_list = [release("v1.000")]
+        api.asset_list = assets("v1.000")
+        withdraw(api, "v1.000", SHA, RECIPE)
+        self.assertEqual(api.events, [])
+        withdraw(api, "v1.002", SHA, RECIPE)
+        self.assertEqual(api.events, [])
+        api.release_list = [{"id": 1, "tag_name": "v1.000", "draft": False, "body": "manual"}]
+        with self.assertRaisesRegex(ValueError, "not managed"):
+            withdraw(api, "v1.000", SHA, RECIPE)
 
     def test_moved_upstream_tag_is_rejected(self):
         api = FakeGitHub()

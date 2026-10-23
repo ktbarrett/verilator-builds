@@ -23,12 +23,21 @@ def platform_matrix(label):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     inputs = parser.add_mutually_exclusive_group(required=True)
-    inputs.add_argument("--seed", action="store_true", help="Resolve upstream HEAD for CI")
+    inputs.add_argument(
+        "--seed", action="store_true", help="Resolve upstream HEAD and oldest release for CI"
+    )
     inputs.add_argument("--label", help="Release tag or development label to select platforms for")
     args = parser.parse_args()
     if args.seed:
         api = GitHub(os.environ["GITHUB_REPOSITORY"])
-        result = "sha=" + api.commit(CONFIG["upstream"], CONFIG["nightly_branch"])
+        oldest = CONFIG["first_release"]
+        result = "\n".join(
+            [
+                "sha=" + api.commit(CONFIG["upstream"], CONFIG["nightly_branch"]),
+                "oldest=" + oldest,
+                "oldest_sha=" + api.commit(CONFIG["upstream"], f"refs/tags/{oldest}"),
+            ]
+        )
     else:
         result = "matrix=" + json.dumps(
             platform_matrix(args.label),

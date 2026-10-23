@@ -2,7 +2,6 @@
   "upstream": "verilator/verilator",
   "first_release": "v5.048",
   "nightly_branch": "master",
-  "max_releases_per_run": 3,
   "platforms": {
     "linux-x86_64": {
       "first_release": "v5.048",

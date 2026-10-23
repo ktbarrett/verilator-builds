@@ -41,11 +41,9 @@ def discover(api, recipe, mode, ref, run):
     for tag in candidates:
         name, sha = tag["name"], tag["commit"]["sha"]
         release = releases.get(name)
-        if release and complete(release, api.assets(release), sha):
+        if release and complete(release, api.assets(release), sha, recipe):
             continue
         builds.append({"sha": sha, "label": name, "mode": "stable", "ref": name})
-        if len(builds) == CONFIG["max_releases_per_run"]:
-            break
 
     sha = api.commit(upstream, CONFIG["nightly_branch"])
     nightly = releases.get("nightly")

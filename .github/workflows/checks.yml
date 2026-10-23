@@ -22,18 +22,29 @@ jobs:
       - run: uv run --no-sync pre-commit run --all-files
       - run: uv run --no-sync python -m pytest
 
-  # Exercise every target using the current upstream HEAD.
+  # The current recipe must build every supported release. Exercise every target
+  # using upstream HEAD and the oldest supported release.
   packages:
-    uses: ./.github/workflows/build.yml
     needs: resolve
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - sha: ${{ needs.resolve.outputs.sha }}
+            label: master
+          - sha: ${{ needs.resolve.outputs.oldest_sha }}
+            label: ${{ needs.resolve.outputs.oldest }}
+    uses: ./.github/workflows/build.yml
     with:
-      sha: ${{ needs.resolve.outputs.sha }}
-      label: master
+      sha: ${{ matrix.sha }}
+      label: ${{ matrix.label }}
 
   resolve:
     runs-on: ubuntu-24.04
     outputs:
       sha: ${{ steps.resolve.outputs.sha }}
+      oldest: ${{ steps.resolve.outputs.oldest }}
+      oldest_sha: ${{ steps.resolve.outputs.oldest_sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
