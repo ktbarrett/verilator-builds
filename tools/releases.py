@@ -16,6 +16,7 @@ class _ReleaseState(BaseModel):
 
     sha: CommitSHA
     recipe: CommitSHA
+    recipe_digest: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")] | None = None
     label: str
     source_version: Annotated[str, Field(pattern=r"^v[0-9]+\.[0-9]{3}$")] | None = None
 
@@ -32,11 +33,12 @@ def release_state(release):
         return None
 
 
-def complete(release, assets, sha, recipe=None):
+def complete(release, assets, sha, digest=None):
+    """A release is complete when built from `sha` with the given recipe digest."""
     state = release_state(release)
     if release.get("draft") or not state or state.get("sha") != sha:
         return False
-    if recipe is not None and state.get("recipe") != recipe:
+    if digest is not None and state.get("recipe_digest") != digest:
         return False
     names = {a["name"] for a in assets if a.get("size", 0) > 0}
     tag = release.get("tag_name")

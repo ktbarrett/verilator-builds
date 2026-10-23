@@ -1,5 +1,8 @@
 name: Build one upstream revision
 
+# This file is part of the recipe digest (config.json recipe_paths). Editing it
+# rebuilds every published release.
+
 on:
   workflow_call:
     inputs:

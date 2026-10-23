@@ -4,13 +4,24 @@
 `Build releases` runs daily and on every push to the default branch. It
 enumerates upstream tags, starting at `first_release` in `config.json`, and
 compares them with complete published releases. A release is complete when it
-was built from the current upstream tag commit **and** the current packaging
-commit. It builds every incomplete stable release, oldest first, one release at
+was built from the current upstream tag commit **and** the current recipe
+digest. It builds every incomplete stable release, oldest first, one release at
 a time, and checks upstream `master` for a nightly build. New upstream tags are
-picked up by the daily run without a packaging change. A packaging change
+picked up by the daily run without a packaging change. A recipe change
 rebuilds every supported release, so the current recipe must build every
 supported Verilator version. Unchanged, complete builds are skipped. Failed
 builds and incomplete uploads are retried on a later run.
+
+The recipe digest is a SHA-256 over the contents of the files that can change a
+package: `recipe_paths` in `config.json`, minus `recipe_ignore`. It covers the
+build and packaging modules in `tools/`, `config.json`, the bundled licenses,
+the smoke test, and the `build.yml` workflow. Discovery, publication, unit
+tests, lockfiles, pre-commit configuration, the other workflows, and
+documentation are excluded, so commits that touch only those do not rebuild
+anything. Dependency bumps are also excluded; a changed validation library only
+takes effect at the next rebuild. Editing either list changes `config.json` and
+therefore the digest. Releases published before the digest existed read as
+stale once and are rebuilt by the next run.
 
 All platforms build the same resolved upstream commit. Stable publication first
 uploads into a draft and publishes only after every supported platform passes
@@ -47,7 +58,7 @@ implemented in this repository. GitHub's automatically generated source archives
 refer to **this packaging repository**, not upstream Verilator; use the explicitly
 attached `verilator-<label>-source.tar.gz` instead. Mirror tags identify the
 packaging commit that built the current assets and move when a release is
-rebuilt; manifests identify the upstream source commit.
+rebuilt; manifests identify the upstream source commit and the recipe digest.
 Manifests also record the declared source version. Publication verifies that stable
 labels and package metadata match the source archive. Discovery requires only the
 packages selected by the label: two for `v5.048`, three for `v5.050` and `v5.052`,
@@ -117,7 +128,7 @@ release metadata from GitHub. Responsibilities are separated:
 - `tools/elf.py`, `tools/macho.py`: inspect binary compatibility using pyelftools and macholib.
 - `tools/validate.py`: validate archive provenance and run the installed smoke test.
 - `tools/publish.py`: verify complete sets, publish, withdraw failed stable rebuilds, and clean up nightly assets.
-- `config.json`: discovery start, per-platform first releases, compatibility targets, runners, and images.
+- `config.json`: discovery start, per-platform first releases, compatibility targets, runners, images, and the recipe digest paths.
 
 Packaging explicitly sets the Perl launcher's data path to `../share/verilator`
 and public-script redirects to `../../../bin`. This keeps the archive relocatable.

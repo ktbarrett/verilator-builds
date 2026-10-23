@@ -12,6 +12,7 @@ from tools.config import (
     PLATFORMS,
     archive_name,
     expected_assets,
+    recipe_digest,
     source_name,
     supported_platforms,
 )
@@ -22,6 +23,8 @@ from tools.releases import MARKER, complete, release_state
 
 SHA = "a" * 40
 RECIPE = "b" * 40
+DIGEST = recipe_digest()
+OTHER_DIGEST = "d" * 64
 
 
 def setUpModule():
@@ -40,8 +43,10 @@ def setUpModule():
     unittest.enterModuleContext(patch.dict(CONFIG, {"first_release": "v1.000"}))
 
 
-def release(label, sha=SHA, recipe=RECIPE, nightly=False, draft=False, source_version=None):
-    state = {"label": label, "sha": sha, "recipe": recipe}
+def release(
+    label, sha=SHA, recipe=RECIPE, digest=DIGEST, nightly=False, draft=False, source_version=None
+):
+    state = {"label": label, "sha": sha, "recipe": recipe, "recipe_digest": digest}
     if source_version is not None:
         state["source_version"] = source_version
     return {
@@ -118,7 +123,7 @@ class FakeGitHub:
 
 class DiscoveryTests(unittest.TestCase):
     def test_bootstrap_and_development_build(self):
-        result = discover(FakeGitHub(), RECIPE, "auto", "", "1")
+        result = discover(FakeGitHub(), RECIPE, DIGEST, "auto", "", "1")
         self.assertEqual([b["mode"] for b in result], ["stable", "nightly"])
         self.assertEqual(result[0]["label"], "v1.000")
         self.assertEqual(result[0]["sha"], SHA)
@@ -127,18 +132,32 @@ class DiscoveryTests(unittest.TestCase):
         api = FakeGitHub()
         api.release_list = [release("v1.000"), release("nightly-old", nightly=True)]
         api.asset_list = assets("v1.000") + assets("nightly-old")
-        self.assertEqual(discover(api, RECIPE, "auto", "", "1"), [])
+        self.assertEqual(discover(api, RECIPE, DIGEST, "auto", "", "1"), [])
         api.asset_list = [a for a in api.asset_list if a["name"] != source_name("v1.000")]
-        result = discover(api, RECIPE, "auto", "", "2")
+        result = discover(api, RECIPE, DIGEST, "auto", "", "2")
         self.assertEqual([b["label"] for b in result], ["v1.000"])
 
     def test_recipe_changes_rebuild_every_release(self):
         api = FakeGitHub()
         api.release_list = [release("v1.000"), release("nightly-old", nightly=True)]
         api.asset_list = assets("v1.000") + assets("nightly-old")
-        result = discover(api, "c" * 40, "auto", "", "1")
+        result = discover(api, "c" * 40, OTHER_DIGEST, "auto", "", "1")
         self.assertEqual([b["mode"] for b in result], ["stable", "nightly"])
         self.assertEqual(result[0]["label"], "v1.000")
+
+    def test_commit_only_changes_keep_releases_complete(self):
+        api = FakeGitHub()
+        api.release_list = [release("v1.000"), release("nightly-old", nightly=True)]
+        api.asset_list = assets("v1.000") + assets("nightly-old")
+        self.assertEqual(discover(api, "c" * 40, DIGEST, "auto", "", "1"), [])
+
+    def test_legacy_markers_without_digest_are_rebuilt_once(self):
+        legacy = release("v1.000")
+        legacy["body"] = (
+            f"<!-- {MARKER} {json.dumps({'label': 'v1.000', 'sha': SHA, 'recipe': RECIPE})} -->"
+        )
+        self.assertTrue(complete(legacy, assets("v1.000"), SHA))
+        self.assertFalse(complete(legacy, assets("v1.000"), SHA, DIGEST))
 
     def test_source_version_markers_and_legacy_markers(self):
         label = "nightly-old-source"
@@ -155,21 +174,21 @@ class DiscoveryTests(unittest.TestCase):
             {"name": tag, "commit": {"sha": SHA}}
             for tag in ["v1.006", "v1.002", "v0.998", "v1.000", "v1.004", "v1.008-rc1"]
         ]
-        result = discover(api, RECIPE, "auto", "", "1")
+        result = discover(api, RECIPE, DIGEST, "auto", "", "1")
         self.assertEqual(
             [b["label"] for b in result[:-1]], ["v1.000", "v1.002", "v1.004", "v1.006"]
         )
         self.assertEqual(result[-1]["mode"], "nightly")
 
     def test_manual_commit_and_historical_tag(self):
-        result = discover(FakeGitHub(), RECIPE, "build", SHA, "1")
+        result = discover(FakeGitHub(), RECIPE, DIGEST, "build", SHA, "1")
         self.assertEqual(result[0]["sha"], SHA)
         self.assertEqual(result[0]["mode"], "build")
         self.assertEqual(
-            discover(FakeGitHub(), RECIPE, "stable", "v0.998", "1")[0]["label"], "v0.998"
+            discover(FakeGitHub(), RECIPE, DIGEST, "stable", "v0.998", "1")[0]["label"], "v0.998"
         )
         with self.assertRaises(ValueError):
-            discover(FakeGitHub(), RECIPE, "stable", "master", "1")
+            discover(FakeGitHub(), RECIPE, DIGEST, "stable", "master", "1")
 
     def test_drafts_and_malformed_markers_are_incomplete(self):
         self.assertFalse(complete(release("v1.000", draft=True), assets("v1.000"), SHA))
@@ -214,38 +233,38 @@ class PublicationTests(unittest.TestCase):
 
     def test_assemble_full_set_and_reject_corruption(self):
         self.packages("v1.000")
-        paths = assemble(self.directory, "v1.000", SHA, RECIPE)
+        paths = assemble(self.directory, "v1.000", SHA, RECIPE, DIGEST)
         self.assertEqual({p.name for p in paths}, expected_assets("v1.000"))
         archive = next(p for p in paths if "linux-x86_64" in p.name)
         archive.write_bytes(b"corrupt")
         with self.assertRaisesRegex(ValueError, "Checksum mismatch"):
-            assemble(self.directory, "v1.000", SHA, RECIPE)
+            assemble(self.directory, "v1.000", SHA, RECIPE, DIGEST)
 
     def test_reject_missing_platform_or_wrong_provenance(self):
         self.packages("v1.000")
         with self.assertRaisesRegex(ValueError, "Mismatched sha"):
-            assemble(self.directory, "v1.000", "c" * 40, RECIPE)
+            assemble(self.directory, "v1.000", "c" * 40, RECIPE, DIGEST)
         (self.directory / "linux-aarch64.manifest.json").unlink()
         with self.assertRaises(FileNotFoundError):
-            assemble(self.directory, "v1.000", SHA, RECIPE)
+            assemble(self.directory, "v1.000", SHA, RECIPE, DIGEST)
 
     def test_reject_source_corruption(self):
         self.packages("v1.000")
         (self.directory / source_name("v1.000")).write_bytes(b"wrong source")
         with self.assertRaisesRegex(ValueError, "Invalid upstream source archive"):
-            assemble(self.directory, "v1.000", SHA, RECIPE)
+            assemble(self.directory, "v1.000", SHA, RECIPE, DIGEST)
 
     def test_source_version_must_match_release_tag_and_package(self):
         self.packages("v1.000", source_version="v1.002")
         with self.assertRaisesRegex(ValueError, "label and source version differ"):
-            assemble(self.directory, "v1.000", SHA, RECIPE)
+            assemble(self.directory, "v1.000", SHA, RECIPE, DIGEST)
         self.packages("v1.000")
         path = self.directory / "linux-x86_64.manifest.json"
         manifest = json.loads(path.read_text())
         manifest["source_version"] = "v1.002"
         path.write_text(json.dumps(manifest))
         with self.assertRaisesRegex(ValueError, "Mismatched source_version"):
-            assemble(self.directory, "v1.000", SHA, RECIPE)
+            assemble(self.directory, "v1.000", SHA, RECIPE, DIGEST)
 
     def test_unknown_sidecar_metadata_cannot_hide_embedded_mismatch(self):
         self.packages("v1.000")
@@ -254,7 +273,7 @@ class PublicationTests(unittest.TestCase):
         manifest["future_build_details"] = "not present in the archive"
         path.write_text(json.dumps(manifest))
         with self.assertRaisesRegex(ValueError, "Embedded manifest mismatch"):
-            assemble(self.directory, "v1.000", SHA, RECIPE)
+            assemble(self.directory, "v1.000", SHA, RECIPE, DIGEST)
 
     def test_nightly_includes_every_platform_regardless_of_source_version(self):
         label = "nightly-old-commit"
@@ -262,9 +281,9 @@ class PublicationTests(unittest.TestCase):
         api.release_list = [release("nightly-old", nightly=True)]
         api.asset_list = assets("nightly-old")
         self.packages(label, source_version="v1.000")
-        publish(api, self.directory, "nightly", label, SHA, RECIPE)
+        publish(api, self.directory, "nightly", label, SHA, RECIPE, DIGEST)
         self.assertEqual({a["name"] for a in api.asset_list}, expected_assets(label, "v1.000"))
-        self.assertTrue(complete(api.release_list[0], api.asset_list, SHA, RECIPE))
+        self.assertTrue(complete(api.release_list[0], api.asset_list, SHA, DIGEST))
         self.assertIn(archive_name(label, "test-later"), {a["name"] for a in api.asset_list})
         api.asset_list.append({"id": 100, "name": "obsolete-upload.tar.gz", "size": 1})
         cleanup_nightly(api)
@@ -277,7 +296,7 @@ class PublicationTests(unittest.TestCase):
         manifest["abi_audited"] = False
         path.write_text(json.dumps(manifest))
         with self.assertRaisesRegex(ValueError, "ABI audit"):
-            assemble(self.directory, "v1.000", SHA, RECIPE)
+            assemble(self.directory, "v1.000", SHA, RECIPE, DIGEST)
 
     def test_cleanup_incomplete_first_nightly(self):
         api = FakeGitHub()
@@ -291,7 +310,7 @@ class PublicationTests(unittest.TestCase):
         api.release_list = [release("nightly-old", nightly=True)]
         api.asset_list = assets("nightly-old")
         self.packages("nightly-new")
-        publish(api, self.directory, "nightly", "nightly-new", SHA, RECIPE)
+        publish(api, self.directory, "nightly", "nightly-new", SHA, RECIPE, DIGEST)
         self.assertEqual({a["name"] for a in api.asset_list}, expected_assets("nightly-new"))
         patch_index = next(
             i for i, e in enumerate(api.events) if e[0] == "PATCH" and e[2].get("body")
@@ -307,7 +326,7 @@ class PublicationTests(unittest.TestCase):
         self.packages("nightly-new")
         api.fail_upload = True
         with self.assertRaisesRegex(RuntimeError, "partial upload"):
-            publish(api, self.directory, "nightly", "nightly-new", SHA, RECIPE)
+            publish(api, self.directory, "nightly", "nightly-new", SHA, RECIPE, DIGEST)
         self.assertEqual(api.release_list[0]["body"], old_body)
         self.assertFalse(any(e[0] == "DELETE" for e in api.events))
         self.assertTrue(expected_assets("nightly-old") <= {a["name"] for a in api.asset_list})
@@ -317,64 +336,64 @@ class PublicationTests(unittest.TestCase):
     def test_stable_draft_is_published_only_after_upload(self):
         api = FakeGitHub()
         self.packages("v1.000")
-        publish(api, self.directory, "stable", "v1.000", SHA, RECIPE)
+        publish(api, self.directory, "stable", "v1.000", SHA, RECIPE, DIGEST)
         self.assertTrue(api.events[0][2]["draft"])
         self.assertFalse(api.release_list[0]["draft"])
         self.assertFalse(api.release_list[0]["prerelease"])
         self.assertTrue(complete(api.release_list[0], api.asset_list, SHA))
         api.events.clear()
-        publish(api, self.directory, "stable", "v1.000", SHA, RECIPE)
+        publish(api, self.directory, "stable", "v1.000", SHA, RECIPE, DIGEST)
         self.assertEqual(api.events, [])
 
     def test_stable_rebuild_replaces_assets_when_recipe_changes(self):
         api = FakeGitHub()
-        api.release_list = [release("v1.000", recipe="c" * 40)]
+        api.release_list = [release("v1.000", digest=OTHER_DIGEST)]
         api.asset_list = [{**a, "digest": "sha256:old"} for a in assets("v1.000")]
         old_ids = {a["id"] for a in api.asset_list}
         self.packages("v1.000")
-        publish(api, self.directory, "stable", "v1.000", SHA, RECIPE)
+        publish(api, self.directory, "stable", "v1.000", SHA, RECIPE, DIGEST)
         draft_index = next(
             i for i, e in enumerate(api.events) if e[0] == "PATCH" and e[2] == {"draft": True}
         )
         upload_index = next(i for i, e in enumerate(api.events) if e[0] == "UPLOAD")
         self.assertLess(draft_index, upload_index)
         self.assertFalse(api.release_list[0]["draft"])
-        self.assertTrue(complete(api.release_list[0], api.asset_list, SHA, RECIPE))
+        self.assertTrue(complete(api.release_list[0], api.asset_list, SHA, DIGEST))
         self.assertEqual({a["name"] for a in api.asset_list}, expected_assets("v1.000"))
         self.assertFalse(old_ids & {a["id"] for a in api.asset_list})
         self.assertIn(("PATCH", "v1.000", {"sha": RECIPE, "force": True}), api.events)
 
     def test_withdraw_hides_stale_release_until_rebuilt(self):
         api = FakeGitHub()
-        api.release_list = [release("v1.000", recipe="c" * 40)]
+        api.release_list = [release("v1.000", digest=OTHER_DIGEST)]
         api.asset_list = assets("v1.000")
-        withdraw(api, "v1.000", SHA, RECIPE)
+        withdraw(api, "v1.000", SHA, DIGEST)
         self.assertTrue(api.release_list[0]["draft"])
         self.assertEqual(len(api.asset_list), len(assets("v1.000")))
-        pending = discover(api, RECIPE, "auto", "", "1")
+        pending = discover(api, RECIPE, DIGEST, "auto", "", "1")
         self.assertEqual([b["label"] for b in pending[:-1]], ["v1.000"])
         api.events.clear()
-        withdraw(api, "v1.000", SHA, RECIPE)
+        withdraw(api, "v1.000", SHA, DIGEST)
         self.assertEqual(api.events, [])
 
     def test_withdraw_preserves_current_or_unmanaged_releases(self):
         api = FakeGitHub()
         api.release_list = [release("v1.000")]
         api.asset_list = assets("v1.000")
-        withdraw(api, "v1.000", SHA, RECIPE)
+        withdraw(api, "v1.000", SHA, DIGEST)
         self.assertEqual(api.events, [])
-        withdraw(api, "v1.002", SHA, RECIPE)
+        withdraw(api, "v1.002", SHA, DIGEST)
         self.assertEqual(api.events, [])
         api.release_list = [{"id": 1, "tag_name": "v1.000", "draft": False, "body": "manual"}]
         with self.assertRaisesRegex(ValueError, "not managed"):
-            withdraw(api, "v1.000", SHA, RECIPE)
+            withdraw(api, "v1.000", SHA, DIGEST)
 
     def test_moved_upstream_tag_is_rejected(self):
         api = FakeGitHub()
         api.release_list = [release("v1.000", sha="c" * 40)]
         self.packages("v1.000")
         with self.assertRaisesRegex(ValueError, "tag changed"):
-            publish(api, self.directory, "stable", "v1.000", SHA, RECIPE)
+            publish(api, self.directory, "stable", "v1.000", SHA, RECIPE, DIGEST)
         self.assertEqual(api.events, [])
 
 

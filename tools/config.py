@@ -1,5 +1,6 @@
 """Shared package naming and configuration."""
 
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -7,6 +8,34 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = json.loads((ROOT / "config.json").read_text())
 PLATFORMS = CONFIG["platforms"]
+
+
+def recipe_digest():
+    """Digest the files that can change a package. Other commits do not force rebuilds."""
+    ignore = {ROOT / entry for entry in CONFIG["recipe_ignore"]}
+    files = []
+    for entry in CONFIG["recipe_paths"]:
+        path = ROOT / entry
+        if path.is_file():
+            files.append(path)
+        elif path.is_dir():
+            files.extend(
+                p
+                for p in path.rglob("*")
+                if p.is_file()
+                and not any(part.startswith(".") for part in p.relative_to(path).parts)
+                and "__pycache__" not in p.parts
+            )
+        else:
+            raise ValueError(f"Recipe path is missing: {entry}")
+    digest = hashlib.sha256()
+    for path in sorted(files):
+        if path in ignore:
+            continue
+        content = path.read_bytes()
+        digest.update(f"{path.relative_to(ROOT).as_posix()}\0{len(content)}\0".encode())
+        digest.update(content)
+    return digest.hexdigest()
 
 
 def version(tag):

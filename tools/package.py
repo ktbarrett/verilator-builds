@@ -8,7 +8,7 @@ import subprocess
 import tarfile
 from pathlib import Path
 
-from .config import CONFIG, PLATFORMS, ROOT, archive_name, source_name
+from .config import CONFIG, PLATFORMS, ROOT, archive_name, recipe_digest, source_name
 
 
 def sha256(path):
@@ -132,6 +132,7 @@ def create_archive(install, output, platform, label, sha, recipe, build_info):
         "upstream": CONFIG["upstream"],
         "sha": sha,
         "recipe": recipe,
+        "recipe_digest": recipe_digest(),
         "label": label,
         "platform": platform,
         "minimum": PLATFORMS[platform]["minimum"],

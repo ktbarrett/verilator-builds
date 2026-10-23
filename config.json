@@ -2,6 +2,20 @@
   "upstream": "verilator/verilator",
   "first_release": "v5.048",
   "nightly_branch": "master",
+  "recipe_paths": [
+    "tools",
+    "config.json",
+    "licenses",
+    "tests/smoke",
+    ".github/workflows/build.yml"
+  ],
+  "recipe_ignore": [
+    "tools/discover.py",
+    "tools/github.py",
+    "tools/matrix.py",
+    "tools/publish.py",
+    "tools/releases.py"
+  ],
   "platforms": {
     "linux-x86_64": {
       "first_release": "v5.048",

@@ -4,12 +4,12 @@ import argparse
 import json
 import os
 
-from .config import CONFIG, version
+from .config import CONFIG, recipe_digest, version
 from .github import GitHub
 from .releases import complete
 
 
-def discover(api, recipe, mode, ref, run):
+def discover(api, recipe, digest, mode, ref, run):
     upstream = CONFIG["upstream"]
     if mode != "auto":
         sha = api.commit(upstream, ref)
@@ -41,13 +41,13 @@ def discover(api, recipe, mode, ref, run):
     for tag in candidates:
         name, sha = tag["name"], tag["commit"]["sha"]
         release = releases.get(name)
-        if release and complete(release, api.assets(release), sha, recipe):
+        if release and complete(release, api.assets(release), sha, digest):
             continue
         builds.append({"sha": sha, "label": name, "mode": "stable", "ref": name})
 
     sha = api.commit(upstream, CONFIG["nightly_branch"])
     nightly = releases.get("nightly")
-    if not nightly or not complete(nightly, api.assets(nightly), sha, recipe):
+    if not nightly or not complete(nightly, api.assets(nightly), sha, digest):
         builds.append(
             {
                 "sha": sha,
@@ -67,6 +67,7 @@ def main():
     builds = discover(
         GitHub(os.environ["GITHUB_REPOSITORY"]),
         os.environ["GITHUB_SHA"],
+        recipe_digest(),
         args.mode,
         args.ref,
         f"{os.environ['GITHUB_RUN_ID']}-{os.environ['GITHUB_RUN_ATTEMPT']}",

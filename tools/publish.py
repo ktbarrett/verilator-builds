@@ -7,14 +7,22 @@ import re
 import tarfile
 from pathlib import Path
 
-from .config import CONFIG, archive_name, expected_assets, source_name, supported_platforms, version
+from .config import (
+    CONFIG,
+    archive_name,
+    expected_assets,
+    recipe_digest,
+    source_name,
+    supported_platforms,
+    version,
+)
 from .github import GitHub
 from .package import sha256
 from .releases import MARKER, complete, release_state
 from .upstream import archive_version
 
 
-def assemble(directory, label, sha, recipe):
+def assemble(directory, label, sha, recipe, digest):
     source = directory / source_name(label)
     if not source.is_file() or not source.stat().st_size:
         raise ValueError("Missing corresponding upstream source archive")
@@ -33,6 +41,7 @@ def assemble(directory, label, sha, recipe):
         for field, value in {
             "sha": sha,
             "recipe": recipe,
+            "recipe_digest": digest,
             "label": label,
             "platform": platform,
             "archive": name,
@@ -61,6 +70,7 @@ def assemble(directory, label, sha, recipe):
         "schema": 1,
         "sha": sha,
         "recipe": recipe,
+        "recipe_digest": digest,
         "label": label,
         "source_version": release,
         "source": {"archive": source.name, "sha256": source_hash},
@@ -87,7 +97,7 @@ def cleanup_nightly(api):
         return
     state = release_state(nightly)
     assets = api.assets(nightly)
-    if state and complete(nightly, assets, state["sha"], state["recipe"]):
+    if state and complete(nightly, assets, state["sha"], state.get("recipe_digest")):
         for asset in obsolete_assets(assets, state["label"], state.get("source_version")):
             api.delete_asset(asset)
     elif nightly["draft"] and not state:
@@ -96,27 +106,27 @@ def cleanup_nightly(api):
             api.delete_asset(asset)
 
 
-def withdraw(api, label, sha, recipe):
+def withdraw(api, label, sha, digest):
     """Hide a stable release whose rebuild failed until a later run succeeds."""
     release = next((r for r in api.releases() if r["tag_name"] == label), None)
     if not release or release["draft"]:
         return
     if not release_state(release):
         raise ValueError("Refusing to withdraw a release not managed by this repository")
-    if complete(release, api.assets(release), sha, recipe):
+    if complete(release, api.assets(release), sha, digest):
         print(f"{label} is already complete for this recipe; preserving the published release")
         return
     # Consumers fall back to a source build while the release is a draft.
     api.update_release(release, draft=True)
 
 
-def publish(api, directory, mode, label, sha, recipe):
+def publish(api, directory, mode, label, sha, recipe, digest):
     if not re.fullmatch(r"[0-9a-f]{40}", sha) or not re.fullmatch(r"[0-9a-f]{40}", recipe):
         raise ValueError("Publication requires full source and packaging commit SHAs")
     if mode == "stable":
         if version(label) is None or api.commit(CONFIG["upstream"], f"refs/tags/{label}") != sha:
             raise ValueError("Stable release does not match its upstream tag")
-    paths = assemble(directory, label, sha, recipe)
+    paths = assemble(directory, label, sha, recipe, digest)
     tag = label if mode == "stable" else "nightly"
     releases = api.releases()
     release = next((r for r in releases if r["tag_name"] == tag), None)
@@ -128,7 +138,7 @@ def publish(api, directory, mode, label, sha, recipe):
             raise ValueError("Refusing to replace a release not managed by this repository")
         if state and state["sha"] != sha:
             raise ValueError("Upstream tag changed since publication; investigate manually")
-        if complete(release, api.assets(release), sha, recipe):
+        if complete(release, api.assets(release), sha, digest):
             print(f"{tag} is already complete for this recipe; preserving the published release")
             return
         # A stable release being replaced must not appear as a complete download set.
@@ -150,6 +160,7 @@ def publish(api, directory, mode, label, sha, recipe):
     state = {
         "sha": sha,
         "recipe": recipe,
+        "recipe_digest": digest,
         "label": label,
         "source_version": manifest["source_version"],
     }
@@ -208,10 +219,11 @@ def main():
         return
     if not all((args.label, args.sha, args.recipe)):
         parser.error("Publication requires --label, --sha, and --recipe")
+    digest = recipe_digest()
     if args.mode == "withdraw":
-        withdraw(api, args.label, args.sha, args.recipe)
+        withdraw(api, args.label, args.sha, digest)
     else:
-        publish(api, args.directory, args.mode, args.label, args.sha, args.recipe)
+        publish(api, args.directory, args.mode, args.label, args.sha, args.recipe, digest)
 
 
 if __name__ == "__main__":
