@@ -6,13 +6,11 @@
     "tools",
     "config.json",
     "licenses",
-    "tests/smoke",
-    ".github/workflows/build.yml"
+    "tests/smoke"
   ],
   "recipe_ignore": [
     "tools/discover.py",
     "tools/github.py",
-    "tools/matrix.py",
     "tools/publish.py",
     "tools/releases.py"
   ],

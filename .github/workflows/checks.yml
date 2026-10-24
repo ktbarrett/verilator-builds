@@ -23,28 +23,13 @@ jobs:
       - run: uv run --no-sync python -m pytest
 
   # The current recipe must build every supported release. Exercise every target
-  # using upstream HEAD and the oldest supported release.
-  packages:
-    needs: resolve
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - sha: ${{ needs.resolve.outputs.sha }}
-            label: master
-          - sha: ${{ needs.resolve.outputs.oldest_sha }}
-            label: ${{ needs.resolve.outputs.oldest }}
-    uses: ./.github/workflows/build.yml
-    with:
-      sha: ${{ matrix.sha }}
-      label: ${{ matrix.label }}
-
+  # using upstream HEAD and the oldest supported release. Pushes to the default
+  # branch skip this; Build releases rebuilds everything there.
   resolve:
+    if: github.ref != 'refs/heads/dev'
     runs-on: ubuntu-24.04
     outputs:
-      sha: ${{ steps.resolve.outputs.sha }}
-      oldest: ${{ steps.resolve.outputs.oldest }}
-      oldest_sha: ${{ steps.resolve.outputs.oldest_sha }}
+      builds: ${{ steps.resolve.outputs.builds }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -57,4 +42,55 @@ jobs:
       - id: resolve
         env:
           GH_TOKEN: ${{ github.token }}
-        run: uv run --no-sync python -m tools.matrix --seed
+        run: uv run --no-sync python -m tools.discover --check
+
+  packages:
+    name: Build ${{ matrix.label }} (${{ matrix.platform }})
+    needs: resolve
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.resolve.outputs.builds) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    env:
+      SOURCE_SHA: ${{ matrix.sha }}
+      BUILD_LABEL: ${{ matrix.label }}
+      BUILD_PLATFORM: ${{ matrix.platform }}
+      RECIPE_SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: verilator/verilator
+          ref: ${{ matrix.sha }}
+          path: upstream
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.12'
+      - run: python -m pip install uv==0.12.17
+      - run: uv sync --locked --no-dev --python 3.12
+      - name: Build Linux in manylinux
+        if: runner.os == 'Linux'
+        run: >-
+          uv run --no-sync python -m tools.linux --platform "$BUILD_PLATFORM" --sha "$SOURCE_SHA"
+          --label "$BUILD_LABEL" --recipe "$RECIPE_SHA"
+      - name: Install macOS build tools
+        if: runner.os == 'macOS'
+        run: brew install autoconf bison flex help2man
+      - name: Build macOS
+        if: runner.os == 'macOS'
+        run: >-
+          uv run --no-sync python -m tools.build --source upstream --platform "$BUILD_PLATFORM"
+          --sha "$SOURCE_SHA" --label "$BUILD_LABEL" --recipe "$RECIPE_SHA"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: packages-${{ matrix.label }}-${{ matrix.platform }}
+          path: |
+            dist/*-${{ matrix.platform }}.tar.gz
+            dist/${{ matrix.platform }}.manifest.json
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0

@@ -40,6 +40,19 @@ def linux_library_override(source, compiler, env):
     return f"CFG_LIBS={libraries}"
 
 
+def homebrew_bins(*formulae):
+    """Keg-only Homebrew tools are not on PATH; Xcode ships older bison and flex."""
+    if not shutil.which("brew"):
+        return []
+    found = []
+    for formula in formulae:
+        result = subprocess.run(["brew", "--prefix", formula], capture_output=True, text=True)
+        prefix = Path(result.stdout.strip()) / "bin"
+        if result.returncode == 0 and prefix.is_dir():
+            found.append(str(prefix))
+    return found
+
+
 def build(args):
     target = PLATFORMS[args.platform]
     validate_label(args.label)
@@ -76,6 +89,8 @@ def build(args):
             "LIBRARY_PATH",
         ):
             env.pop(key, None)
+        if args.platform.startswith("macos-"):
+            env["PATH"] = os.pathsep.join([*homebrew_bins("bison", "flex"), env["PATH"]])
         compiler = "clang++" if args.platform.startswith("macos-") else "g++"
         env.update(
             CXX=compiler,

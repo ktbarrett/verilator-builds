@@ -16,7 +16,7 @@ from tools.config import (
     source_name,
     supported_platforms,
 )
-from tools.discover import discover
+from tools.discover import check_builds, discover, platform_matrix
 from tools.package import create_archive, sha256
 from tools.publish import assemble, cleanup_nightly, publish, withdraw
 from tools.releases import MARKER, complete, release_state
@@ -123,7 +123,7 @@ class FakeGitHub:
 
 class DiscoveryTests(unittest.TestCase):
     def test_bootstrap_and_development_build(self):
-        result = discover(FakeGitHub(), RECIPE, DIGEST, "auto", "", "1")
+        result = discover(FakeGitHub(), RECIPE, DIGEST, "1")
         self.assertEqual([b["mode"] for b in result], ["stable", "nightly"])
         self.assertEqual(result[0]["label"], "v1.000")
         self.assertEqual(result[0]["sha"], SHA)
@@ -132,16 +132,16 @@ class DiscoveryTests(unittest.TestCase):
         api = FakeGitHub()
         api.release_list = [release("v1.000"), release("nightly-old", nightly=True)]
         api.asset_list = assets("v1.000") + assets("nightly-old")
-        self.assertEqual(discover(api, RECIPE, DIGEST, "auto", "", "1"), [])
+        self.assertEqual(discover(api, RECIPE, DIGEST, "1"), [])
         api.asset_list = [a for a in api.asset_list if a["name"] != source_name("v1.000")]
-        result = discover(api, RECIPE, DIGEST, "auto", "", "2")
+        result = discover(api, RECIPE, DIGEST, "2")
         self.assertEqual([b["label"] for b in result], ["v1.000"])
 
     def test_recipe_changes_rebuild_every_release(self):
         api = FakeGitHub()
         api.release_list = [release("v1.000"), release("nightly-old", nightly=True)]
         api.asset_list = assets("v1.000") + assets("nightly-old")
-        result = discover(api, "c" * 40, OTHER_DIGEST, "auto", "", "1")
+        result = discover(api, "c" * 40, OTHER_DIGEST, "1")
         self.assertEqual([b["mode"] for b in result], ["stable", "nightly"])
         self.assertEqual(result[0]["label"], "v1.000")
 
@@ -149,7 +149,7 @@ class DiscoveryTests(unittest.TestCase):
         api = FakeGitHub()
         api.release_list = [release("v1.000"), release("nightly-old", nightly=True)]
         api.asset_list = assets("v1.000") + assets("nightly-old")
-        self.assertEqual(discover(api, "c" * 40, DIGEST, "auto", "", "1"), [])
+        self.assertEqual(discover(api, "c" * 40, DIGEST, "1"), [])
 
     def test_legacy_markers_without_digest_are_rebuilt_once(self):
         legacy = release("v1.000")
@@ -174,21 +174,26 @@ class DiscoveryTests(unittest.TestCase):
             {"name": tag, "commit": {"sha": SHA}}
             for tag in ["v1.006", "v1.002", "v0.998", "v1.000", "v1.004", "v1.008-rc1"]
         ]
-        result = discover(api, RECIPE, DIGEST, "auto", "", "1")
+        result = discover(api, RECIPE, DIGEST, "1")
         self.assertEqual(
             [b["label"] for b in result[:-1]], ["v1.000", "v1.002", "v1.004", "v1.006"]
         )
         self.assertEqual(result[-1]["mode"], "nightly")
 
-    def test_manual_commit_and_historical_tag(self):
-        result = discover(FakeGitHub(), RECIPE, DIGEST, "build", SHA, "1")
-        self.assertEqual(result[0]["sha"], SHA)
-        self.assertEqual(result[0]["mode"], "build")
+    def test_check_builds_cover_master_and_oldest_release(self):
+        self.assertEqual([b["label"] for b in check_builds(FakeGitHub())], ["master", "v1.000"])
+
+    def test_platform_matrix_applies_release_floors(self):
         self.assertEqual(
-            discover(FakeGitHub(), RECIPE, DIGEST, "stable", "v0.998", "1")[0]["label"], "v0.998"
+            [t["platform"] for t in platform_matrix("v1.000")], ["linux-x86_64", "linux-aarch64"]
+        )
+        self.assertEqual(len(platform_matrix("v1.002")), 3)
+        self.assertEqual(len(platform_matrix("nightly-abc")), 3)
+        self.assertEqual(
+            [t["source_asset"] for t in platform_matrix("v1.002")], [True, False, False]
         )
         with self.assertRaises(ValueError):
-            discover(FakeGitHub(), RECIPE, DIGEST, "stable", "master", "1")
+            platform_matrix("v0.998")
 
     def test_drafts_and_malformed_markers_are_incomplete(self):
         self.assertFalse(complete(release("v1.000", draft=True), assets("v1.000"), SHA))
@@ -370,7 +375,7 @@ class PublicationTests(unittest.TestCase):
         withdraw(api, "v1.000", SHA, DIGEST)
         self.assertTrue(api.release_list[0]["draft"])
         self.assertEqual(len(api.asset_list), len(assets("v1.000")))
-        pending = discover(api, RECIPE, DIGEST, "auto", "", "1")
+        pending = discover(api, RECIPE, DIGEST, "1")
         self.assertEqual([b["label"] for b in pending[:-1]], ["v1.000"])
         api.events.clear()
         withdraw(api, "v1.000", SHA, DIGEST)

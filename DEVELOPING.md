@@ -1,8 +1,8 @@
 
 ## Automation
 
-`Build releases` runs daily and on every push to the default branch. It
-enumerates upstream tags, starting at `first_release` in `config.json`, and
+`Build releases` runs daily, on every push to the default branch, and on
+manual dispatch. It has one behaviour and no options. It enumerates upstream tags, starting at `first_release` in `config.json`, and
 compares them with complete published releases. A release is complete when it
 was built from the current upstream tag commit **and** the current recipe
 digest. It builds every incomplete stable release, oldest first, one release at
@@ -15,13 +15,15 @@ builds and incomplete uploads are retried on a later run.
 The recipe digest is a SHA-256 over the contents of the files that can change a
 package: `recipe_paths` in `config.json`, minus `recipe_ignore`. It covers the
 build and packaging modules in `tools/`, `config.json`, the bundled licenses,
-the smoke test, and the `build.yml` workflow. Discovery, publication, unit
-tests, lockfiles, pre-commit configuration, the other workflows, and
-documentation are excluded, so commits that touch only those do not rebuild
-anything. Dependency bumps are also excluded; a changed validation library only
-takes effect at the next rebuild. Editing either list changes `config.json` and
-therefore the digest. Releases published before the digest existed read as
-stale once and are rebuilt by the next run.
+and the smoke test. Discovery, publication, unit tests, lockfiles, pre-commit
+configuration, workflows, and documentation are excluded, so commits that touch
+only those do not rebuild anything. The workflows are plumbing and provisioning:
+runner images and the Homebrew package list can change without a rebuild, in
+the same way that the manylinux image tag can. Dependency bumps are also
+excluded; a changed validation library only takes effect at the next rebuild.
+Editing either list changes `config.json` and therefore the digest. Releases
+published before the digest existed read as stale once and are rebuilt by the
+next run.
 
 All platforms build the same resolved upstream commit. Stable publication first
 uploads into a draft and publishes only after every supported platform passes
@@ -68,25 +70,19 @@ GitHub schedules can be delayed and run only from the default branch. GitHub may
 disable scheduled workflows in inactive public repositories; re-enable them in
 Actions if necessary. Runner availability and repository Actions quotas apply.
 
-## Start the first release or build a specific revision
+## Run the pipeline by hand
 
 Push these files to the repository's default branch and enable GitHub Actions.
-Use **Actions → Build releases → Run workflow**:
-
-| Mode | Ref | Result |
-| --- | --- | --- |
-| `build` (default) | Any upstream tag or commit | Test every platform; one-day Actions artifacts |
-| `stable` | `v5.048` | Publish the first mirrored release |
-| `auto` | Ignored | Rebuild every stale release from v5.048 and update nightly |
-| `nightly` | `master`, a tag, or a commit | Force replacement of the rolling prerelease |
-
-Or, with GitHub CLI:
+Use **Actions → Build releases → Run workflow**, or:
 
 ```sh
-gh workflow run releases.yml -f mode=stable -f ref=v5.048
-gh workflow run releases.yml -f mode=build -f ref=<upstream-commit>
-gh workflow run releases.yml -f mode=auto
+gh workflow run releases.yml
 ```
+
+The discover job prints the list of releases it will build. The build job runs
+one matrix entry per release and platform, up to four at a time. The publish
+job then runs once per release, one at a time, after every build has finished.
+Dispatching from a branch publishes packages built by that branch's recipe.
 
 The standard `GITHUB_TOKEN` is sufficient. Only release management jobs request
 `contents: write`; compilation and PR jobs use `contents: read`, do not persist
@@ -118,11 +114,10 @@ dependency use Ruff 0.16.6; update their versions together.
 The utilities use PyGithub for GitHub operations and Pydantic when reading
 release metadata from GitHub. Responsibilities are separated:
 
-- `tools/discover.py`: resolve requested source revisions and find missing releases.
+- `tools/discover.py`: find stale releases, or the pull request check set, and expand them into the build matrix.
 - `tools/upstream.py`: read the source version from upstream metadata.
 - `tools/github.py`: authenticate GitHub API calls, paginate results, and manage release assets.
 - `tools/releases.py`: validate published generation metadata shared by discovery and publication.
-- `tools/matrix.py`: select supported build targets and resolve the CI test release.
 - `tools/build.py`, `tools/linux.py`: build a private source export on the target platform.
 - `tools/package.py`: relocate installed metadata, create archives and provenance.
 - `tools/elf.py`, `tools/macho.py`: inspect binary compatibility using pyelftools and macholib.
@@ -174,9 +169,12 @@ The Python CI job uses the same environment setup, hooks, and test command.
 Pytest runs both fixture-based tests and the existing unittest tests. To check Ruff
 without editing files, run `uv run ruff check .` and `uv run ruff format --check .`.
 
-Pull requests and pushes resolve the current upstream `master` to an immutable
-commit and build every platform for it and for the oldest supported release,
-`first_release` in `config.json`. No development-version cutoff is required.
+Pull requests and branch pushes run the lint and unit tests, then build upstream
+`master` and the oldest supported release, `first_release` in `config.json`, on
+every platform. These packages are one-day Actions artifacts and are never
+published. Pushes to the default branch skip the package build because
+`Build releases` rebuilds everything there. A recipe change that still breaks a
+platform after merge withdraws the affected releases to drafts until it is fixed.
 GitHub Actions are pinned to commits. Manylinux image digests are recorded in
 manifests, but the configured image tags and installed build dependencies can
 advance; these builds are not claimed to be bit-for-bit reproducible. Pin image
