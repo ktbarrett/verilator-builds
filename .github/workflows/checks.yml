@@ -85,7 +85,7 @@ jobs:
         run: >-
           uv run --no-sync python -m tools.build --source upstream --platform "$BUILD_PLATFORM"
           --sha "$SOURCE_SHA" --label "$BUILD_LABEL" --recipe "$RECIPE_SHA"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: packages-${{ matrix.label }}-${{ matrix.platform }}
           path: |
