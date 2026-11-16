@@ -88,8 +88,9 @@ def normalize_makefile(makefile, platform):
     contents = makefile.read_text()
     for variable, value in replacements.items():
         contents, count = re.subn(
-            rf"^{variable}\s*\??=.*$",
-            f"{variable} = {value}",
+            # Keep upstream's operator so OBJCACHE stays overridable (?=).
+            rf"^({variable}\s*\??=).*$",
+            rf"\g<1> {value}",
             contents,
             flags=re.MULTILINE,
         )
