@@ -1,0 +1,95 @@
+name: Install macOS build tools
+description: >-
+  Install the Homebrew build tools, plus every versioned formula named by
+  "macos_flex" in config.json, for nightly or for releases. Pinned formulae are
+  extracted from homebrew/core's history into a local tap and built from source.
+  The extracted formulae and built kegs are cached per macOS version and
+  architecture, so this only happens when the pins or the runner OS change.
+
+runs:
+  using: composite
+  steps:
+    - name: Install Homebrew tools and the local tap
+      id: brew
+      shell: bash
+      run: |
+        brew install autoconf bison flex help2man
+        formulae=$(python3 -c '
+        import json
+        config = json.load(open("config.json"))["macos_flex"]
+        names = {config["nightly"], *(pin["formula"] for pin in config["releases"])}
+        print(" ".join(sorted(name for name in names if "@" in name)))
+        ')
+        if [ -z "$formulae" ]; then
+          exit 0
+        fi
+        read -ra formulae <<< "$formulae"
+        brew tap-new --no-git verilator-builds/local
+        tap=$(brew --repository verilator-builds/local)
+        cellar=$(brew --cellar)
+        {
+          echo "formulae=${formulae[*]}"
+          echo "key=brew-pins-macos$(sw_vers -productVersion | cut -d. -f1)-${RUNNER_ARCH}-$(IFS=-; echo "${formulae[*]}")"
+          echo "paths<<EOF"
+          printf '%s\n' "${formulae[@]/#/$tap/Formula/}" | sed 's/$/.rb/'
+          printf '%s\n' "${formulae[@]/#/$cellar/}"
+          echo "EOF"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Restore pinned formulae
+      id: cache
+      if: steps.brew.outputs.formulae != ''
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
+      with:
+        path: ${{ steps.brew.outputs.paths }}
+        key: ${{ steps.brew.outputs.key }}
+
+    # brew extract needs homebrew/core's git history, which the API-based default
+    # install does not clone. It copies only the formula, so also copy the
+    # homebrew/core 'Patches/' files it references, from the same revision.
+    - name: Extract and build pinned formulae
+      if: steps.brew.outputs.formulae != '' && steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        FORMULAE: ${{ steps.brew.outputs.formulae }}
+      run: |
+        brew tap --force homebrew/core
+        core=$(brew --repository homebrew/core)
+        tap=$(brew --repository verilator-builds/local)
+        for formula in $FORMULAE; do
+          output=$(brew extract --version="${formula#*@}" "${formula%@*}" verilator-builds/local)
+          echo "$output"
+          revision=$(sed -n 's/.* from revision \([0-9a-f]*\) to:.*/\1/p' <<< "$output")
+          if [ -z "$revision" ]; then
+            echo "::error::Cannot find the homebrew/core revision brew extract used for $formula"
+            exit 1
+          fi
+          for patch in $(grep -oE "Patches/[^\"' )]+" "$tap/Formula/$formula.rb" | sort -u); do
+            mkdir -p "$tap/$(dirname "$patch")"
+            git -C "$core" show "$revision:$patch" > "$tap/$patch"
+            echo "Copied $patch from homebrew/core $revision"
+          done
+          brew install --build-from-source "verilator-builds/local/$formula"
+        done
+
+    # Save immediately so that a later Verilator build failure does not discard it.
+    - name: Save pinned formulae
+      if: steps.brew.outputs.formulae != '' && steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
+      with:
+        path: ${{ steps.brew.outputs.paths }}
+        key: ${{ steps.brew.outputs.key }}
+
+    # Restored kegs lack their runtime dependencies and the opt links that
+    # 'brew --prefix <formula>' resolves.
+    - name: Link restored formulae
+      if: steps.cache.outputs.cache-hit == 'true'
+      shell: bash
+      env:
+        FORMULAE: ${{ steps.brew.outputs.formulae }}
+      run: |
+        opt="$(brew --prefix)/opt"
+        for formula in $FORMULAE; do
+          brew install --only-dependencies "verilator-builds/local/$formula"
+          ln -sfn "../Cellar/$formula/${formula#*@}" "$opt/$formula"
+        done

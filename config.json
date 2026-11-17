@@ -2,6 +2,15 @@
   "upstream": "verilator/verilator",
   "first_release": "v5.048",
   "nightly_branch": "master",
+  "macos_flex": {
+    "nightly": "flex",
+    "releases": [
+      {
+        "versions": "<v5.056",
+        "formula": "flex@2.6.4"
+      }
+    ]
+  },
   "recipe_paths": [
     "tools",
     "config.json",

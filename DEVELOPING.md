@@ -123,7 +123,7 @@ release metadata from GitHub. Responsibilities are separated:
 - `tools/elf.py`, `tools/macho.py`: inspect binary compatibility using pyelftools and macholib.
 - `tools/validate.py`: validate archive provenance and run the installed smoke test.
 - `tools/publish.py`: verify complete sets, publish, withdraw failed stable rebuilds, and clean up nightly assets.
-- `config.json`: discovery start, per-platform first releases, compatibility targets, runners, images, and the recipe digest paths.
+- `config.json`: discovery start, per-platform first releases, compatibility targets, runners, images, macOS flex pins, and the recipe digest paths.
 
 Packaging explicitly sets the Perl launcher's data path to `../share/verilator`
 and public-script redirects to `../../../bin`. This keeps the archive relocatable.
@@ -139,7 +139,39 @@ uv run python -m tools.build --source ../verilator \
 
 This requires autoconf, flex, bison, help2man, make, Perl, Python, the target C++
 compiler, and the platform
-`strip` utility. Linux ABI validation requires a
+`strip` utility. On macOS, `macos_flex` in `config.json` selects the Homebrew flex
+formula for each label. Development labels, including nightly and `master`, have
+no version and use the `nightly` formula. Release labels use `releases`, an
+ordered list of pins where the first match wins. A pin's `versions` is a
+comma-separated list of comparisons against release tags, using `<`, `<=`, `==`,
+`!=`, `>=`, or `>`, for example `">=v5.056,<v5.060"`; every comparison must hold.
+A pin without `versions` matches every release. Releases that match no pin use
+the newest Homebrew `flex`. A formula of `flex` means the newest Homebrew flex;
+`flex@<version>` pins that version. Releases before `v5.056` pin `flex@2.6.4`,
+because they compile flex output against Xcode's `FlexLexer.h`, which only
+matches flex 2.6.4. The build stops if the `flex` on `PATH` is not the pinned
+version.
+
+To pin another version, add a pin to `releases` or set `nightly`; this changes the recipe
+digest and rebuilds every release. CI extracts every pinned formula from
+homebrew/core's git history with `brew extract` into a local tap, builds it from
+source, and caches the extracted formulae and built kegs per macOS version,
+architecture, and pin list. Only a cache miss clones homebrew/core. `brew extract`
+copies only the formula, so CI also copies any homebrew/core `Patches/` files the
+formula references, from the revision `brew extract` reports. Locally, run:
+
+```sh
+brew tap --force homebrew/core
+brew tap-new --no-git verilator-builds/local
+brew extract --version=<version> flex verilator-builds/local
+# For each "Patches/..." path in the extracted formula, using the revision printed above:
+mkdir -p "$(dirname "$(brew --repository verilator-builds/local)/<path>")"
+git -C "$(brew --repository homebrew/core)" show <revision>:<path> \
+  > "$(brew --repository verilator-builds/local)/<path>"
+brew install --build-from-source verilator-builds/local/flex@<version>
+```
+
+Linux ABI validation requires a
 manylinux-compatible environment. For a functional development build on a newer
 Linux host, `--skip-abi-audit` is available; it is forbidden in CI and publication
 rejects such packages. Outputs go to ignored `dist/`; temporary builds use ignored

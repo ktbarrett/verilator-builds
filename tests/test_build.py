@@ -9,6 +9,69 @@ from pathlib import Path
 from unittest.mock import patch
 
 from tools.build import linux_library_override
+from tools.config import CONFIG, macos_flex, version_matches
+
+
+class MacosFlexTests(unittest.TestCase):
+    def test_configured_pins(self) -> None:
+        self.assertEqual(macos_flex("v5.052"), "flex@2.6.4")
+        self.assertEqual(macos_flex("v5.054"), "flex@2.6.4")
+        self.assertEqual(macos_flex("v5.056"), "flex")
+        self.assertEqual(macos_flex("master"), "flex")
+        self.assertEqual(macos_flex("nightly-0123456789ab-0123456789ab-1-1"), "flex")
+
+    def test_first_matching_pin_wins(self) -> None:
+        config = {
+            "nightly": "flex",
+            "releases": [
+                {"versions": "<v5.056", "formula": "flex@2.6.4"},
+                {"versions": ">=v5.056, <v5.060", "formula": "flex@2.6.9"},
+                {"formula": "flex@2.6.10"},
+            ],
+        }
+        with patch.dict(CONFIG, {"macos_flex": config}):
+            self.assertEqual(macos_flex("v5.054"), "flex@2.6.4")
+            self.assertEqual(macos_flex("v5.058"), "flex@2.6.9")
+            self.assertEqual(macos_flex("v5.060"), "flex@2.6.10")
+            self.assertEqual(macos_flex("master"), "flex")
+
+    def test_nightly_switch(self) -> None:
+        config = {"nightly": "flex@2.6.9", "releases": [{"formula": "flex@2.6.4"}]}
+        with patch.dict(CONFIG, {"macos_flex": config}):
+            self.assertEqual(macos_flex("master"), "flex@2.6.9")
+            self.assertEqual(macos_flex("nightly-0123456789ab-0123456789ab-1-1"), "flex@2.6.9")
+            self.assertEqual(macos_flex("v5.060"), "flex@2.6.4")
+
+    def test_version_operators(self) -> None:
+        cases = {
+            "<v5.054": [True, False, False],
+            "<=v5.054": [True, True, False],
+            "==v5.054": [False, True, False],
+            "!=v5.054": [True, False, True],
+            ">=v5.054": [False, True, True],
+            ">v5.054": [False, False, True],
+            ">v5.050,<=v5.054,!=v5.052": [False, True, False],
+        }
+        for spec, expected in cases.items():
+            actual = [version_matches(label, spec) for label in ("v5.052", "v5.054", "v5.056")]
+            self.assertEqual(actual, expected, spec)
+        self.assertFalse(version_matches("master", "!=v5.054"))
+
+    def test_invalid_versions_fail(self) -> None:
+        for spec in ("5.056", "=<v5.056", "<v5.56", "<v5.056,", "~=v5.056"):
+            with self.assertRaisesRegex(ValueError, "Invalid version clause"):
+                version_matches("v5.052", spec)
+
+    def test_configured_pins_are_valid(self) -> None:
+        # The macOS action runs 'brew extract --version=<version> flex' for each
+        # versioned formula. Check every clause here, since development builds skip them.
+        config = CONFIG["macos_flex"]
+        formula = r"^flex(@\d+(\.\d+)*)?$"
+        self.assertRegex(config["nightly"], formula)
+        for pin in config["releases"]:
+            self.assertRegex(pin["formula"], formula)
+            if "versions" in pin:
+                version_matches("v5.052", pin["versions"])
 
 
 class LinuxLinkTests(unittest.TestCase):
