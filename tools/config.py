@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import operator
 import re
 from pathlib import Path
 
@@ -51,6 +52,48 @@ def supported_platforms(label):
         for name, target in PLATFORMS.items()
         if parsed is None or parsed >= version(target["first_release"])
     ]
+
+
+COMPARISONS = {
+    "<": operator.lt,
+    "<=": operator.le,
+    "==": operator.eq,
+    "!=": operator.ne,
+    ">=": operator.ge,
+    ">": operator.gt,
+}
+
+
+def version_matches(label: str, spec: str) -> bool:
+    """Check a label against comma-separated clauses such as ">=v5.056,<v5.060".
+
+    Every clause must hold. Development labels have no version and never match.
+    """
+    clauses = []
+    for clause in spec.split(","):
+        match = re.fullmatch(r"\s*(<=|>=|==|!=|<|>)\s*(v\d+\.\d{3})\s*", clause)
+        if not match:
+            raise ValueError(f"Invalid version clause: {clause!r}")
+        clauses.append((COMPARISONS[match[1]], version(match[2])))
+    parsed = version(validate_label(label))
+    return parsed is not None and all(compare(parsed, bound) for compare, bound in clauses)
+
+
+def macos_flex(label: str) -> str:
+    """Homebrew flex formula for a label.
+
+    Development labels have no version, so they use the "nightly" formula. Release
+    labels use the first matching release pin, else the newest flex. A release pin
+    without "versions" matches every release.
+    """
+    config = CONFIG["macos_flex"]
+    if version(validate_label(label)) is None:
+        return config["nightly"]
+    for pin in config["releases"]:
+        spec = pin.get("versions")
+        if spec is None or version_matches(label, spec):
+            return pin["formula"]
+    return "flex"
 
 
 def validate_label(label):

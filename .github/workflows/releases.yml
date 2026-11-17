@@ -95,7 +95,7 @@ jobs:
           --label "$BUILD_LABEL" --recipe "$RECIPE_SHA"
       - name: Install macOS build tools
         if: runner.os == 'macOS'
-        run: brew install autoconf bison flex help2man
+        uses: ./.github/actions/macos-tools
       - name: Build macOS
         if: runner.os == 'macOS'
         run: >-

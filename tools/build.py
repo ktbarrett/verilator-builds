@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from .config import PLATFORMS, supported_platforms, validate_label
+from .config import PLATFORMS, macos_flex, supported_platforms, validate_label
 from .package import create_archive, export_source, normalize_install, sha256, source_archive_path
 from .upstream import source_version
 from .validate import validate_archive
@@ -90,7 +90,14 @@ def build(args):
         ):
             env.pop(key, None)
         if args.platform.startswith("macos-"):
-            env["PATH"] = os.pathsep.join([*homebrew_bins("bison", "flex"), env["PATH"]])
+            # Some releases only build with an older flex; see "macos_flex" in config.json.
+            flex = macos_flex(args.label)
+            env["PATH"] = os.pathsep.join([*homebrew_bins("bison", flex), env["PATH"]])
+            pinned = flex.partition("@")[2]
+            if pinned:
+                found = subprocess.check_output(["flex", "--version"], env=env, text=True)
+                if found.split()[1] != pinned:
+                    raise ValueError(f"{args.label} requires {flex} on macOS; found {found}")
         compiler = "clang++" if args.platform.startswith("macos-") else "g++"
         env.update(
             CXX=compiler,
